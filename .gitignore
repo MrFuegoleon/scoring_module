@@ -1,0 +1,24 @@
+# Node
+node_modules/
+dist/
+.env
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+*.egg-info/
+
+# Uploads temporaires
+backend/uploads/
+
+# Rapports générés (trop lourds pour git)
+dashboard_influenceurs.html
+data_profiling_report.html
+data_profiling_report.json
+
+# OS
+.DS_Store
+Thumbs.db
