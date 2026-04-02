@@ -1,441 +1,7 @@
+import './App.css'
 import { useState, useRef } from 'react'
-import { useProfile, ProfileModal } from './components/ProfileModal'
 import ScoreDisplay from './components/ScoreDisplay'
-
-// ── Styles ────────────────────────────────────────────────────────────────────
-const CSS = `
-  @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;600;700&family=Syne:wght@400;600;700;800&display=swap');
-
-  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-
-  :root {
-    --bg:        #0a0a0f;
-    --bg2:       #111118;
-    --bg3:       #1a1a24;
-    --border:    #2a2a3a;
-    --accent:    #6c63ff;
-    --accent2:   #00d4aa;
-    --accent3:   #ff6b6b;
-    --warn:      #f59e0b;
-    --text:      #e2e2f0;
-    --muted:     #6b6b8a;
-    --font-mono: 'JetBrains Mono', monospace;
-    --font-sans: 'Syne', sans-serif;
-  }
-
-  body {
-    background: var(--bg);
-    color: var(--text);
-    font-family: var(--font-mono);
-    min-height: 100vh;
-    line-height: 1.6;
-  }
-
-  .app {
-    max-width: 1100px;
-    margin: 0 auto;
-    padding: 2rem 1.5rem 4rem;
-  }
-
-  /* ── Header ── */
-  .header {
-    border-bottom: 1px solid var(--border);
-    padding-bottom: 1.5rem;
-    margin-bottom: 2.5rem;
-  }
-  .header-tag {
-    font-size: 0.65rem;
-    letter-spacing: 0.2em;
-    text-transform: uppercase;
-    color: var(--accent);
-    margin-bottom: 0.4rem;
-  }
-  .header h1 {
-    font-family: var(--font-sans);
-    font-size: 2rem;
-    font-weight: 800;
-    background: linear-gradient(135deg, var(--text) 0%, var(--accent) 100%);
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
-    background-clip: text;
-  }
-  .header-sub {
-    color: var(--muted);
-    font-size: 0.78rem;
-    margin-top: 0.3rem;
-  }
-
-  /* ── Compartiment Card ── */
-  .compartment {
-    background: var(--bg2);
-    border: 1px solid var(--border);
-    border-radius: 12px;
-    margin-bottom: 1.5rem;
-    overflow: hidden;
-  }
-  .compartment-header {
-    display: flex;
-    align-items: center;
-    gap: 0.75rem;
-    padding: 1rem 1.25rem;
-    border-bottom: 1px solid var(--border);
-    background: var(--bg3);
-    cursor: pointer;
-    user-select: none;
-  }
-  .compartment-header:hover { background: #1f1f2e; }
-  .comp-icon {
-    width: 28px; height: 28px;
-    border-radius: 6px;
-    display: flex; align-items: center; justify-content: center;
-    font-size: 0.85rem;
-    flex-shrink: 0;
-  }
-  .comp-icon.quality  { background: rgba(108,99,255,0.15); border: 1px solid rgba(108,99,255,0.3); }
-  .comp-icon.system   { background: rgba(0,212,170,0.1);  border: 1px solid rgba(0,212,170,0.2); }
-  .comp-icon.disabled { background: rgba(107,107,138,0.1); border: 1px solid rgba(107,107,138,0.2); }
-  .comp-title {
-    font-family: var(--font-sans);
-    font-size: 0.9rem;
-    font-weight: 700;
-    flex: 1;
-  }
-  .comp-badge {
-    font-size: 0.6rem;
-    padding: 2px 8px;
-    border-radius: 20px;
-    letter-spacing: 0.1em;
-    text-transform: uppercase;
-  }
-  .badge-active   { background: rgba(0,212,170,0.15); color: var(--accent2); border: 1px solid rgba(0,212,170,0.3); }
-  .badge-soon     { background: rgba(107,107,138,0.1); color: var(--muted);   border: 1px solid var(--border); }
-  .comp-chevron   { color: var(--muted); font-size: 0.75rem; transition: transform 0.2s; }
-  .comp-chevron.open { transform: rotate(180deg); }
-  .compartment-body { padding: 1.25rem; }
-
-  /* ── Système de tests ── */
-  .test-grid {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 0.75rem;
-  }
-  .test-btn {
-    background: var(--bg3);
-    border: 1px solid var(--border);
-    color: var(--text);
-    padding: 0.6rem 1rem;
-    border-radius: 8px;
-    font-family: var(--font-mono);
-    font-size: 0.75rem;
-    cursor: pointer;
-    transition: all 0.15s;
-    text-align: left;
-    display: flex; align-items: center; gap: 0.5rem;
-  }
-  .test-btn:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
-  .test-btn:disabled { opacity: 0.4; cursor: not-allowed; }
-
-  /* ── Drop Zone ── */
-  .drop-zone {
-    border: 2px dashed var(--border);
-    border-radius: 10px;
-    padding: 2rem;
-    text-align: center;
-    cursor: pointer;
-    transition: all 0.2s;
-    background: var(--bg);
-    position: relative;
-  }
-  .drop-zone.dragging {
-    border-color: var(--accent);
-    background: rgba(108,99,255,0.05);
-  }
-  .drop-zone:hover { border-color: #3a3a5a; }
-  .drop-icon { font-size: 2rem; margin-bottom: 0.5rem; }
-  .drop-label { font-size: 0.8rem; color: var(--muted); }
-  .drop-label span { color: var(--accent); }
-  .drop-formats { font-size: 0.65rem; color: var(--muted); margin-top: 0.3rem; letter-spacing: 0.05em; }
-  .file-selected {
-    display: flex; align-items: center; gap: 0.75rem;
-    background: rgba(108,99,255,0.08);
-    border: 1px solid rgba(108,99,255,0.25);
-    border-radius: 8px;
-    padding: 0.75rem 1rem;
-    margin-top: 0.75rem;
-  }
-  .file-name { font-size: 0.8rem; flex: 1; }
-  .file-size { font-size: 0.7rem; color: var(--muted); }
-  .file-clear {
-    background: none; border: none; color: var(--muted);
-    cursor: pointer; font-size: 1rem; padding: 0;
-  }
-  .file-clear:hover { color: var(--accent3); }
-
-  /* ── Actions ── */
-  .action-row {
-    display: flex; gap: 0.75rem; margin-top: 1rem; flex-wrap: wrap;
-  }
-  .btn-primary {
-    background: var(--accent);
-    color: #fff;
-    border: none;
-    padding: 0.6rem 1.25rem;
-    border-radius: 8px;
-    font-family: var(--font-mono);
-    font-size: 0.78rem;
-    font-weight: 600;
-    cursor: pointer;
-    transition: all 0.15s;
-    display: flex; align-items: center; gap: 0.5rem;
-  }
-  .btn-primary:hover:not(:disabled) { background: #7c74ff; transform: translateY(-1px); }
-  .btn-primary:disabled { opacity: 0.4; cursor: not-allowed; transform: none; }
-  .btn-secondary {
-    background: var(--bg3);
-    color: var(--text);
-    border: 1px solid var(--border);
-    padding: 0.6rem 1.25rem;
-    border-radius: 8px;
-    font-family: var(--font-mono);
-    font-size: 0.78rem;
-    cursor: pointer;
-    transition: all 0.15s;
-  }
-  .btn-secondary:hover:not(:disabled) { border-color: var(--accent2); color: var(--accent2); }
-  .btn-secondary:disabled { opacity: 0.4; cursor: not-allowed; }
-  .btn-profile {
-    background: transparent;
-    color: var(--accent2);
-    border: 1px solid rgba(0,212,170,0.35);
-    padding: 0.6rem 1.25rem;
-    border-radius: 8px;
-    font-family: var(--font-mono);
-    font-size: 0.78rem;
-    cursor: pointer;
-    transition: all 0.15s;
-    display: flex; align-items: center; gap: 0.5rem;
-  }
-  .btn-profile:hover:not(:disabled) { background: rgba(0,212,170,0.08); border-color: var(--accent2); }
-  .btn-profile:disabled { opacity: 0.4; cursor: not-allowed; }
-
-  /* ── Loader ── */
-  .loader {
-    display: flex; align-items: center; gap: 0.75rem;
-    color: var(--accent); font-size: 0.8rem; margin-top: 1rem;
-  }
-  .spinner {
-    width: 16px; height: 16px;
-    border: 2px solid rgba(108,99,255,0.2);
-    border-top-color: var(--accent);
-    border-radius: 50%;
-    animation: spin 0.7s linear infinite;
-  }
-  @keyframes spin { to { transform: rotate(360deg); } }
-
-  /* ── Score Card ── */
-  .score-section { margin-top: 1.25rem; }
-  .score-card {
-    background: var(--bg);
-    border: 1px solid var(--border);
-    border-radius: 10px;
-    padding: 1.25rem;
-    margin-bottom: 1rem;
-  }
-  .score-label { font-size: 0.7rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.1em; }
-  .score-grade {
-    font-size: 0.75rem;
-    padding: 3px 10px;
-    border-radius: 20px;
-    font-weight: 600;
-  }
-  .grade-excellent { background: rgba(0,212,170,0.15); color: var(--accent2); border: 1px solid rgba(0,212,170,0.3); }
-  .grade-acceptable { background: rgba(245,158,11,0.15); color: var(--warn); border: 1px solid rgba(245,158,11,0.3); }
-  .grade-degraded  { background: rgba(255,107,107,0.15); color: #ff9090; border: 1px solid rgba(255,107,107,0.3); }
-  .grade-critique  { background: rgba(255,107,107,0.2); color: var(--accent3); border: 1px solid rgba(255,107,107,0.4); }
-
-  /* Score bar */
-  .score-bar-wrap { background: var(--bg3); border-radius: 4px; height: 6px; margin-bottom: 1.25rem; overflow: hidden; }
-  .score-bar { height: 100%; border-radius: 4px; transition: width 0.8s ease; }
-
-  /* Dimensions */
-  .dimensions { display: grid; grid-template-columns: repeat(2, 1fr); gap: 0.6rem; }
-  .dim-item {
-    background: var(--bg3);
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    padding: 0.6rem 0.75rem;
-  }
-  .dim-top { display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.3rem; }
-  .dim-name { font-size: 0.68rem; color: var(--muted); text-transform: capitalize; }
-  .dim-score { font-size: 0.75rem; font-weight: 600; }
-  .dim-bar-wrap { background: var(--bg); border-radius: 2px; height: 3px; }
-  .dim-bar { height: 100%; border-radius: 2px; transition: width 0.6s ease; }
-
-  /* ── Alertes ── */
-  .alerts-list { display: flex; flex-direction: column; gap: 0.5rem; margin-bottom: 1rem; }
-  .alert-item {
-    display: flex; align-items: flex-start; gap: 0.6rem;
-    padding: 0.65rem 0.85rem;
-    border-radius: 8px;
-    font-size: 0.75rem;
-  }
-  .alert-warning { background: rgba(245,158,11,0.08); border: 1px solid rgba(245,158,11,0.25); }
-  .alert-info    { background: rgba(108,99,255,0.08); border: 1px solid rgba(108,99,255,0.2); }
-  .alert-icon    { font-size: 0.85rem; flex-shrink: 0; margin-top: 1px; }
-  .alert-msg     { color: var(--text); }
-
-  /* ── Overview ── */
-  .overview-grid {
-    display: grid;
-    grid-template-columns: repeat(4, 1fr);
-    gap: 0.6rem;
-    margin-bottom: 1rem;
-  }
-  .ov-card {
-    background: var(--bg3);
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    padding: 0.75rem;
-    text-align: center;
-  }
-  .ov-val {
-    font-family: var(--font-sans);
-    font-size: 1.4rem;
-    font-weight: 700;
-    color: var(--accent);
-  }
-  .ov-key { font-size: 0.65rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.08em; margin-top: 0.1rem; }
-
-  /* ── Colonnes table ── */
-  .section-title {
-    font-size: 0.68rem;
-    text-transform: uppercase;
-    letter-spacing: 0.12em;
-    color: var(--muted);
-    margin-bottom: 0.6rem;
-    margin-top: 1rem;
-  }
-  .col-table { width: 100%; border-collapse: collapse; font-size: 0.72rem; }
-  .col-table th {
-    text-align: left;
-    padding: 0.4rem 0.6rem;
-    color: var(--muted);
-    font-weight: 400;
-    border-bottom: 1px solid var(--border);
-    font-size: 0.65rem;
-    text-transform: uppercase;
-    letter-spacing: 0.08em;
-  }
-  .col-table td {
-    padding: 0.45rem 0.6rem;
-    border-bottom: 1px solid rgba(42,42,58,0.5);
-    vertical-align: middle;
-  }
-  .col-table tr:last-child td { border-bottom: none; }
-  .col-table tr:hover td { background: rgba(108,99,255,0.04); }
-  .type-badge {
-    font-size: 0.6rem;
-    padding: 1px 7px;
-    border-radius: 10px;
-    border: 1px solid var(--border);
-    color: var(--muted);
-    white-space: nowrap;
-  }
-  .missing-bar-wrap { background: var(--bg3); border-radius: 2px; height: 4px; width: 60px; display: inline-block; vertical-align: middle; }
-  .missing-bar { height: 100%; border-radius: 2px; }
-
-  /* ── Raw result (tests système) ── */
-  .raw-result {
-    background: var(--bg);
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    padding: 1rem;
-    font-size: 0.72rem;
-    overflow-x: auto;
-    margin-top: 0.75rem;
-    color: var(--accent2);
-    max-height: 300px;
-    overflow-y: auto;
-  }
-
-  /* ── Modale profiling ── */
-  .profile-overlay {
-    position: fixed; inset: 0; z-index: 1000;
-    background: rgba(0,0,0,0.85);
-    display: flex; flex-direction: column;
-    animation: fadeIn 0.2s ease;
-  }
-  @keyframes fadeIn { from { opacity: 0 } to { opacity: 1 } }
-  .profile-modal-bar {
-    display: flex; align-items: center; justify-content: space-between;
-    padding: 0.75rem 1.25rem;
-    background: var(--bg2);
-    border-bottom: 1px solid var(--border);
-    flex-shrink: 0;
-  }
-  .profile-modal-title {
-    font-family: var(--font-sans);
-    font-size: 0.85rem;
-    font-weight: 700;
-    display: flex; align-items: center; gap: 0.5rem;
-  }
-  .profile-modal-actions { display: flex; gap: 0.5rem; }
-  .btn-modal-close {
-    background: rgba(255,107,107,0.1);
-    color: var(--accent3);
-    border: 1px solid rgba(255,107,107,0.3);
-    padding: 0.4rem 0.85rem;
-    border-radius: 6px;
-    font-family: var(--font-mono);
-    font-size: 0.75rem;
-    cursor: pointer;
-    transition: all 0.15s;
-  }
-  .btn-modal-close:hover { background: rgba(255,107,107,0.2); }
-  .btn-modal-dl {
-    background: rgba(108,99,255,0.1);
-    color: var(--accent);
-    border: 1px solid rgba(108,99,255,0.3);
-    padding: 0.4rem 0.85rem;
-    border-radius: 6px;
-    font-family: var(--font-mono);
-    font-size: 0.75rem;
-    cursor: pointer;
-    transition: all 0.15s;
-    display: flex; align-items: center; gap: 0.4rem;
-  }
-  .btn-modal-dl:hover { background: rgba(108,99,255,0.2); }
-  .profile-iframe {
-    flex: 1;
-    border: none;
-    width: 100%;
-    background: #fff;
-  }
-  .profile-loading {
-    position: absolute; inset: 0;
-    display: flex; flex-direction: column;
-    align-items: center; justify-content: center;
-    background: var(--bg);
-    gap: 1rem;
-    z-index: 10;
-  }
-  .profile-loading-text { font-size: 0.8rem; color: var(--muted); }
-  .spinner-lg {
-    width: 36px; height: 36px;
-    border: 3px solid rgba(108,99,255,0.2);
-    border-top-color: var(--accent);
-    border-radius: 50%;
-    animation: spin 0.8s linear infinite;
-  }
-
-  /* ── Responsive ── */
-  @media (max-width: 640px) {
-    .test-grid       { grid-template-columns: 1fr; }
-    .dimensions      { grid-template-columns: 1fr; }
-    .overview-grid   { grid-template-columns: repeat(2, 1fr); }
-  }
-`
-
+import { ProfileModal, useProfile } from './components/ProfileModal'
 // ── Helper ────────────────────────────────────────────────────────────────────
 const fmtBytes = (b) => {
   if (b < 1024) return b + ' B'
@@ -450,9 +16,17 @@ export default function App() {
   const [loading, setLoading]         = useState(false)
   const [loadingMsg, setLoadingMsg]   = useState('')
   const [qualityData, setQualityData] = useState(null)
+  const [llmAnalysis, setLlmAnalysis] = useState(null)
   const [systemResult, setSystemResult] = useState(null)
   const [openComp, setOpenComp]       = useState({ quality: true, system: false })
+  const [showTextDesc, setShowTextDesc] = useState(false)
+  const [textDescription, setTextDescription] = useState('')
+  const [descriptionFile, setDescriptionFile] = useState(null)
+  const [showConfirmation, setShowConfirmation] = useState(false)
+  const [pendingAction, setPendingAction] = useState(null)
+  
   const fileInputRef = useRef()
+  const descFileInputRef = useRef()
   const { openProfile, closeProfile, profileState } = useProfile()
 
   const toggleComp = (key) => setOpenComp(p => ({ ...p, [key]: !p[key] }))
@@ -474,12 +48,45 @@ export default function App() {
     if (fileInputRef.current) fileInputRef.current.value = ''
   }
 
+  const handleDescriptionFileChange = (e) => {
+    const f = e.target.files[0]
+    if (f) setDescriptionFile(f)
+  }
+
+  const clearDescription = () => {
+    setShowTextDesc(false)
+    setTextDescription('')
+    setDescriptionFile(null)
+    if (descFileInputRef.current) descFileInputRef.current.value = ''
+  }
+
+  const handleOpenProfileWithConfirmation = () => {
+    if (!file) return
+    setPendingAction('profile')
+    setShowConfirmation(true)
+  }
+
+  const confirmAndExecuteAction = async () => {
+    setShowConfirmation(false)
+    
+    if (pendingAction === 'profile') {
+      openProfile(file)
+    } else if (pendingAction === 'report') {
+      await runReport()
+    }
+    
+    setPendingAction(null)
+  }
+
   // ── Data Quality actions ─────────────────────────────────────────────────
   const runReport = async () => {
     if (!file) return
     setLoading(true); setLoadingMsg('Analyse qualité en cours...')
     const fd = new FormData()
     fd.append('file', file)
+    if (textDescription.trim()) fd.append('description', textDescription)
+    if (descriptionFile) fd.append('descriptionFile', descriptionFile)
+    
     try {
       const res = await fetch('/api/data-quality/report', { method: 'POST', body: fd })
       if (!res.ok) {
@@ -487,13 +94,45 @@ export default function App() {
         setQualityData({ error: err.error || `Erreur HTTP ${res.status}` })
       } else {
         const data = await res.json()
-        if (data.success) setQualityData(data)
-        else setQualityData({ error: data.error || 'Erreur inconnue' })
+        if (data.success) {
+          setQualityData(data)
+          // Appeler LLM après le rapport
+          setLoadingMsg('Analyse LLM en cours...')
+          await runLlmAnalysis(file)
+        } else {
+          setQualityData({ error: data.error || 'Erreur inconnue' })
+        }
       }
     } catch (e) {
       setQualityData({ error: e.message })
     }
     setLoading(false)
+  }
+
+  const runLlmAnalysis = async (dataFile) => {
+    const fd = new FormData()
+    fd.append('file', dataFile)
+    if (textDescription.trim()) fd.append('description', textDescription)
+    
+    try {
+      const res = await fetch('/api/data-quality/llm-analyze', { method: 'POST', body: fd })
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}))
+        setLlmAnalysis({ error: err.error || `Erreur HTTP ${res.status}` })
+      } else {
+        const data = await res.json()
+        if (data.success) setLlmAnalysis(data.analysis)
+        else setLlmAnalysis({ error: data.error || 'Erreur inconnue' })
+      }
+    } catch (e) {
+      setLlmAnalysis({ error: e.message })
+    }
+  }
+
+  const handleOpenReportWithConfirmation = () => {
+    if (!file) return
+    setPendingAction('report')
+    setShowConfirmation(true)
   }
 
   const runPreview = async () => {
@@ -541,7 +180,6 @@ export default function App() {
 
   return (
     <>
-      <style>{CSS}</style>
       <div className="app">
 
         {/* ── Header ── */}
@@ -584,6 +222,64 @@ export default function App() {
                 </div>
                 <div className="drop-formats">CSV · XLSX · JSON · PARQUET</div>
               </div>
+              <div className="compartment-note">
+                <span className="note-icon">ℹ</span>
+                <span>
+                  Règles métiers pour le scoring (ex: description de la data) :
+                </span>
+                <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.5rem' }}>
+                  <button 
+                    className="btn-desc"
+                    onClick={() => { setShowTextDesc(false); setTextDescription(''); if (descFileInputRef.current) descFileInputRef.current.click() }}
+                    style={{ flex: 1 }}
+                  >
+                    📎 Uploader un fichier
+                  </button>
+                  <button 
+                    className="btn-desc"
+                    onClick={() => { setShowTextDesc(true); setDescriptionFile(null); if (descFileInputRef.current) descFileInputRef.current.value = '' }}
+                    style={{ flex: 1 }}
+                  >
+                    ✏️ Écrire du texte
+                  </button>
+                  <button 
+                    className="btn-desc"
+                    onClick={clearDescription}
+                    style={{ flex: 0.5 }}
+                    title="Effacer la description"
+                  >
+                    ✕
+                  </button>
+                </div>
+                <input
+                  ref={descFileInputRef}
+                  type="file"
+                  accept=".txt,.md,.pdf,.doc,.docx"
+                  onChange={handleDescriptionFileChange}
+                  style={{ display: 'none' }}
+                />
+              </div>
+              
+              {/* Affichage de la description textuelle */}
+              {showTextDesc && (
+                <div className="text-description">
+                  <textarea
+                    placeholder="Entrez une description textuelle de la data et des règles métiers..."
+                    value={textDescription}
+                    onChange={(e) => setTextDescription(e.target.value)}
+                    rows="4"
+                  />
+                </div>
+              )}
+              
+              {/* Affichage du fichier description sélectionné */}
+              {descriptionFile && (
+                <div className="file-selected" style={{ backgroundColor: 'var(--bg-secondary)' }}>
+                  <span>📄</span>
+                  <span className="file-name">{descriptionFile.name}</span>
+                  <span className="file-size">{fmtBytes(descriptionFile.size)}</span>
+                </div>
+              )}
 
               {/* Fichier sélectionné */}
               {file && (
@@ -595,15 +291,50 @@ export default function App() {
                 </div>
               )}
 
+              {/* Panneau de confirmation */}
+              {showConfirmation && (
+                <div className="confirmation-panel">
+                  <div className="confirmation-content">
+                    <h3>✓ Confirmer la description</h3>
+                    <div className="confirmation-summary">
+                      <div className="summary-item">
+                        <span className="summary-label">📄 Dataset :</span>
+                        <span className="summary-value">{file?.name} ({fmtBytes(file?.size || 0)})</span>
+                      </div>
+                      <div className="summary-item">
+                        <span className="summary-label">📝 Description :</span>
+                        <span className="summary-value">
+                          {textDescription.trim() ? (
+                            <>Texte ({textDescription.length} caractères)</>
+                          ) : descriptionFile ? (
+                            <>Fichier: {descriptionFile.name}</>
+                          ) : (
+                            <span style={{ color: 'var(--muted)' }}>Aucune</span>
+                          )}
+                        </span>
+                      </div>
+                    </div>
+                    <div className="confirmation-actions">
+                      <button className="btn-cancel" onClick={() => setShowConfirmation(false)}>
+                        Annuler
+                      </button>
+                      <button className="btn-confirm" onClick={confirmAndExecuteAction} disabled={loading}>
+                        ✓ Confirmer
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
+
               {/* Actions */}
               <div className="action-row">
-                <button className="btn-primary" onClick={runReport} disabled={!file || loading}>
+                <button className="btn-primary" onClick={handleOpenReportWithConfirmation} disabled={!file || loading}>
                   🔍 Rapport complet
                 </button>
                 <button className="btn-secondary" onClick={runPreview} disabled={!file || loading}>
                   👁 Aperçu rapide
                 </button>
-                <button className="btn-profile" onClick={() => openProfile(file)} disabled={!file || loading}>
+                <button className="btn-profile" onClick={handleOpenProfileWithConfirmation} disabled={!file || loading}>
                   📊 Voir rapport détaillé
                 </button>
               </div>
@@ -622,6 +353,98 @@ export default function App() {
                 <div className="alert-item alert-warning" style={{ marginTop: '0.75rem' }}>
                   <span className="alert-icon">⚠</span>
                   <span className="alert-msg">{qualityData.error}</span>
+                </div>
+              )}
+
+              {/* Analyse LLM - Problèmes potentiels */}
+              {llmAnalysis && !llmAnalysis.error && (
+                <div className="llm-analysis-section" style={{ marginTop: '2rem' }}>
+                  <div className="section-title">🤖 Analyse LLM - Problèmes Potentiels</div>
+                  
+                  {/* Évaluation globale */}
+                  {llmAnalysis.overall_assessment && (
+                    <div className="llm-assessment" style={{ background: 'rgba(108,99,255,0.05)', border: '1px solid rgba(108,99,255,0.2)', borderRadius: '8px', padding: '1rem', marginBottom: '1rem' }}>
+                      <p style={{ fontSize: '0.85rem', color: 'var(--text)', lineHeight: '1.6' }}>
+                        {llmAnalysis.overall_assessment}
+                      </p>
+                    </div>
+                  )}
+
+                  {/* Problèmes par pilier */}
+                  {['accuracy', 'coherence', 'validity'].map(pillar => {
+                    const pillarData = llmAnalysis[pillar]
+                    if (!pillarData?.issues?.length) return null
+                    const pillarNames = { accuracy: '🎯 Précision', coherence: '⚙ Cohérence', validity: '✅ Validité' }
+                    // Calculer le score basé sur les vrais pourcentages
+                    const avgPercentage = pillarData.issues.reduce((sum, issue) => sum + (issue.percentage || 0), 0) / pillarData.issues.length
+                    const score = Math.max(0, 100 - avgPercentage)
+                    const color = score >= 80 ? '#00d4aa' : score >= 60 ? '#f59e0b' : '#ff6b6b'
+                    
+                    return (
+                      <div key={pillar} style={{ marginBottom: '1.25rem' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '0.75rem' }}>
+                          <span style={{ fontSize: '0.9rem', fontWeight: 600 }}>{pillarNames[pillar]}</span>
+                          <div style={{ background: color + '20', color: color, padding: '2px 8px', borderRadius: '10px', fontSize: '0.7rem', fontWeight: 600 }}>
+                            {score.toFixed(1)}%
+                          </div>
+                        </div>
+                        
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                          {pillarData.issues.map((issue, idx) => (
+                            <div key={idx} className={`llm-issue severity-${issue.severity}`} style={{ background: issue.severity === 'high' ? 'rgba(255,107,107,0.08)' : issue.severity === 'medium' ? 'rgba(245,158,11,0.08)' : 'rgba(108,99,255,0.08)', border: `1px solid ${issue.severity === 'high' ? 'rgba(255,107,107,0.25)' : issue.severity === 'medium' ? 'rgba(245,158,11,0.25)' : 'rgba(108,99,255,0.15)'}`, borderRadius: '6px', padding: '0.75rem' }}>
+                              <div style={{ display: 'flex', alignItems: 'start', gap: '0.5rem' }}>
+                                <span style={{ fontSize: '0.8rem', fontWeight: 600, color: issue.severity === 'high' ? '#ff9090' : issue.severity === 'medium' ? '#f59e0b' : 'var(--accent)' }}>
+                                  {issue.severity === 'high' ? '🔴' : issue.severity === 'medium' ? '🟡' : '🔵'}
+                                </span>
+                                <div style={{ flex: 1 }}>
+                                  <p style={{ fontSize: '0.78rem', fontWeight: 600, marginBottom: '0.25rem' }}>{issue.description}</p>
+                                  {issue.affected_columns?.length > 0 && (
+                                    <p style={{ fontSize: '0.7rem', color: 'var(--muted)' }}>
+                                      Colonnes affectées: <span style={{ color: 'var(--accent2)' }}>{issue.affected_columns.join(', ')}</span>
+                                    </p>
+                                  )}
+                                  <p style={{ fontSize: '0.7rem', color: 'var(--muted)' }}>
+                                    Pourcentage affecté: <span style={{ color: issue.severity === 'high' ? '#ff9090' : issue.severity === 'medium' ? '#f59e0b' : 'var(--accent)', fontWeight: 600 }}>{issue.percentage}%</span>
+                                  </p>
+                                  {issue.examples?.length > 0 && (
+                                    <p style={{ fontSize: '0.7rem', color: 'var(--muted)', marginTop: '0.3rem' }}>
+                                      Exemples: <span style={{ fontFamily: 'monospace', fontSize: '0.65rem' }}>{issue.examples.slice(0, 2).join(', ')}</span>
+                                    </p>
+                                  )}
+                                </div>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )
+                  })}
+
+                  {/* Recommandations */}
+                  {llmAnalysis.recommendations?.length > 0 && (
+                    <div style={{ marginTop: '1.5rem', borderTop: '1px solid var(--border)', paddingTop: '1rem' }}>
+                      <div className="section-title">💡 Recommandations</div>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                        {llmAnalysis.recommendations.map((rec, idx) => (
+                          <div key={idx} style={{ background: 'var(--bg3)', border: '1px solid var(--border)', borderRadius: '6px', padding: '0.75rem', fontSize: '0.78rem' }}>
+                            <div style={{ fontWeight: 600, marginBottom: '0.3rem', color: rec.priority === 'high' ? '#ff9090' : rec.priority === 'medium' ? '#f59e0b' : 'var(--accent2)' }}>
+                              {rec.priority === 'high' ? '🔴' : rec.priority === 'medium' ? '🟡' : '🟢'} {rec.action}
+                            </div>
+                            {rec.target_columns?.length > 0 && (
+                              <p style={{ fontSize: '0.7rem', color: 'var(--muted)' }}>Cibles: {rec.target_columns.join(', ')}</p>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {llmAnalysis?.error && (
+                <div className="alert-item alert-warning" style={{ marginTop: '1.5rem' }}>
+                  <span className="alert-icon">⚠</span>
+                  <span className="alert-msg">LLM Analysis: {llmAnalysis.error}</span>
                 </div>
               )}
 

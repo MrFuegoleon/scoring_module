@@ -17,6 +17,15 @@ const gradeClass = (g) => {
   return map[g] || ''
 }
 
+const pillarNames = {
+  'completeness': { fr: 'Complétude', icon: '✓' },
+  'uniqueness': { fr: 'Unicité', icon: '🔑' },
+  'consistency': { fr: 'Cohérence', icon: '⚙' },
+  'validity': { fr: 'Validité', icon: '✅' },
+  'accuracy': { fr: 'Précision', icon: '🎯' },
+  'timeliness': { fr: 'Actualité', icon: '📅' },
+}
+
 // ── Composant ScoreDisplay ────────────────────────────────────────────────────
 export default function ScoreDisplay({ data }) {
   const qs     = data.quality_score
@@ -58,17 +67,20 @@ export default function ScoreDisplay({ data }) {
         </div>
 
         <div className="dimensions">
-          {Object.entries(qs.dimensions || {}).map(([dim, info]) => (
-            <div key={dim} className="dim-item">
-              <div className="dim-top">
-                <span className="dim-name">{dim}</span>
-                <span className="dim-score" style={{ color: scoreColor(info.score) }}>{info.score}%</span>
+          {Object.entries(qs.dimensions || {}).map(([dim, info]) => {
+            const p = pillarNames[dim] || { fr: dim, icon: '📊' }
+            return (
+              <div key={dim} className="dim-item">
+                <div className="dim-top">
+                  <span className="dim-name">{p.icon} {p.fr}</span>
+                  <span className="dim-score" style={{ color: scoreColor(info.score) }}>{info.score}%</span>
+                </div>
+                <div className="dim-bar-wrap">
+                  <div className="dim-bar" style={{ width: `${info.score}%`, background: scoreColor(info.score) }} />
+                </div>
               </div>
-              <div className="dim-bar-wrap">
-                <div className="dim-bar" style={{ width: `${info.score}%`, background: scoreColor(info.score) }} />
-              </div>
-            </div>
-          ))}
+            )
+          })}
         </div>
       </div>
 
