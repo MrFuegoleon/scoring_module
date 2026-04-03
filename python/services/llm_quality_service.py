@@ -99,7 +99,7 @@ def _safe_val(val):
 # ══════════════════════════════════════════════════════════════════════════════
 
 SYSTEM_PROMPT = """Tu es un expert senior en Data Quality avec 15 ans d'expérience.
-Tu analyses des résumés statistiques de datasets et identifies des problèmes RÉELS et ACTIONNABLES.
+Tu analyses des résumés statistiques de datasets et identifies des problèmes RÉELS et ACTIONNABLES et tu reponds qu'en francais.
 
 Note : completeness et uniqueness sont gérés séparément par un outil statistique (ydata_profiling).
 Tu dois uniquement évaluer les 4 piliers suivants.
