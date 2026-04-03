@@ -13,6 +13,11 @@ from services.data_quality_service import (
     compute_quality_score,
     generate_profile_html,
 )
+from services.llm_quality_service import (
+    llm_quality_check,
+    execute_problems,
+    compute_llm_score,
+)
 
 data_quality_bp = Blueprint("data_quality", __name__)
 
@@ -115,6 +120,58 @@ def quality_score_only():
         score = compute_quality_score(df)
         return jsonify({"success": True, **score}), 200
 
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+# ── POST /api/data-quality/llm-analyze ───────────────────────────────────────
+@data_quality_bp.route("/llm-analyze", methods=["POST"])
+def llm_analyze():
+    """Analyse LLM 2 étapes : détection + exécution des problèmes générés."""
+    try:
+        if "file" in request.files:
+            df = load_dataframe(request.files["file"])
+        elif request.is_json:
+            body = request.get_json()
+            filepath = body.get("filepath", "")
+            df = load_dataframe_from_path(filepath)
+        else:
+            return jsonify({"error": "Fournir un fichier (multipart) ou un JSON avec 'filepath'"}), 400
+
+        if df.empty:
+            return jsonify({"error": "Le dataset est vide"}), 400
+
+        description = ""
+        if request.is_json:
+            description = body.get("description", "")
+        elif "description" in request.form:
+            description = request.form.get("description", "")
+
+        llm_result = llm_quality_check(df, description=description)
+        execution_result = execute_problems(df, llm_result.get("problems", []))
+        merged_analysis = {
+            # Conserver compatibilité front existant
+            "overall_assessment": execution_result.get("overall_assessment") or llm_result.get("overall_assessment"),
+            "score": compute_llm_score(execution_result),
+            "accuracy": execution_result.get("accuracy"),
+            "consistency": execution_result.get("consistency"),
+            "coherence": execution_result.get("consistency") or execution_result.get("coherence"),
+            "timeliness": execution_result.get("timeliness"),
+            "validity": execution_result.get("validity"),
+            "recommendations": llm_result.get("recommendations", []),
+            # Exposer trace pour debug
+            "debug": {
+                "initial": llm_result,
+                "executed": execution_result,
+            },
+        }
+
+        return jsonify({"success": True, "analysis": merged_analysis}), 200
+
+    except FileNotFoundError as e:
+        return jsonify({"error": str(e)}), 404
     except ValueError as e:
         return jsonify({"error": str(e)}), 400
     except Exception as e:

@@ -99,6 +99,25 @@ router.post("/report", upload.single("file"), async (req, res) => {
   }
 });
 
+// ══════════════════════════════════════════════════════════════════════════════
+// POST /api/data-quality/llm-analyze
+// LLM analysis (proxy vers Flask)
+// ══════════════════════════════════════════════════════════════════════════════
+router.post("/llm-analyze", upload.single("file"), async (req, res) => {
+  if (!req.file) return res.status(400).json({ error: "Aucun fichier fourni" });
+
+  try {
+    const data = await forwardFileToFlask(
+      "/api/data-quality/llm-analyze",
+      req.file.path,
+      req.file.originalname,
+    );
+    res.json(data);
+  } catch (e) {
+    handleError(res, e);
+  }
+});
+
 /**
  * Ajouter dans routes/dataQuality.routes.js
  * ──────────────────────────────────────────
@@ -143,7 +162,9 @@ router.post("/profile", upload.single("file"), async (req, res) => {
     // responseType:"text" → e.response.data est une string, pas un objet
     let msg = e.message;
     if (e.response?.data) {
-      try { msg = JSON.parse(e.response.data)?.error || msg; } catch {}
+      try {
+        msg = JSON.parse(e.response.data)?.error || msg;
+      } catch {}
     }
     res.status(500).json({ error: msg });
   }

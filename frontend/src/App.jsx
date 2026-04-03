@@ -121,8 +121,18 @@ export default function App() {
         setLlmAnalysis({ error: err.error || `Erreur HTTP ${res.status}` })
       } else {
         const data = await res.json()
-        if (data.success) setLlmAnalysis(data.analysis)
-        else setLlmAnalysis({ error: data.error || 'Erreur inconnue' })
+        if (data.success) {
+          const raw = data.analysis || {}
+          const normalized = {
+            ...raw,
+            ...raw.executed,
+            ...raw.initial,
+            overall_assessment: raw.overall_assessment || raw.initial?.overall_assessment || raw.executed?.overall_assessment,
+            recommendations: raw.recommendations || raw.initial?.recommendations || [],
+            coherence: raw.coherence || raw.consistency || raw.executed?.consistency || raw.initial?.consistency,
+          }
+          setLlmAnalysis(normalized)
+        } else setLlmAnalysis({ error: data.error || 'Erreur inconnue' })
       }
     } catch (e) {
       setLlmAnalysis({ error: e.message })
@@ -419,6 +429,13 @@ export default function App() {
                       </div>
                     )
                   })}
+
+                  {/* Pas de problèmes détectés */}
+                  {(!llmAnalysis.recommendations?.length && !['accuracy','coherence','validity','timeliness'].some(p => llmAnalysis[p]?.issues?.length)) && (
+                    <div style={{ marginTop: '0.5rem', padding: '0.75rem', background: 'rgba(0,212,170,0.08)', border: '1px solid rgba(0,212,170,0.2)', borderRadius: '6px', color: '#00d4aa' }}>
+                      ✓ Aucune anomalie significative détectée par l'analyse LLM.
+                    </div>
+                  )}
 
                   {/* Recommandations */}
                   {llmAnalysis.recommendations?.length > 0 && (
