@@ -22,7 +22,10 @@ const COMPONENTS = {
 export default function App() {
   const [activeIndex, setActiveIndex] = useState(0)
   const [collapsed, setCollapsed]     = useState(false)
-  const [theme, setTheme]             = useState('dark')   // 'dark' | 'light'
+  const [theme, setTheme]             = useState('dark')
+
+  // Dataset global — persiste entre les modules
+  const [activeFile, setActiveFile]   = useState(null)
 
   const activeNav       = NAV_ITEMS[activeIndex]
   const ActiveComponent = COMPONENTS[activeNav.key]
@@ -116,6 +119,12 @@ export default function App() {
             </div>
           </div>
           <div className="topbar-right">
+            {activeFile && (
+              <div className="topbar-dataset">
+                <span className="active-dot" />
+                <span className="topbar-dataset-name">{activeFile.name}</span>
+              </div>
+            )}
             <span className={`topbar-badge ${activeNav.badgeClass}`}>
               {activeNav.badge}
             </span>
@@ -127,7 +136,7 @@ export default function App() {
 
         {/* Page */}
         <div className="page-wrapper">
-          <ActiveComponent />
+          <ActiveComponent activeFile={activeFile} setActiveFile={setActiveFile} />
         </div>
 
         {/* ══ Navigation entre modules ══ */}

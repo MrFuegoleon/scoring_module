@@ -8,62 +8,161 @@ const fmtBytes = (b) => {
   return (b / 1024 / 1024).toFixed(1) + ' MB'
 }
 
+// Parse la réponse preview en { columns, rows } quelle que soit la forme
+const parsePreview = (data) => {
+  if (!data) return null
+
+  // Format { columns, data: [[...]] }
+  if (Array.isArray(data.columns) && Array.isArray(data.data)) {
+    return { columns: data.columns, rows: data.data }
+  }
+  // Format { columns, rows }
+  if (Array.isArray(data.columns) && Array.isArray(data.rows)) {
+    return { columns: data.columns, rows: data.rows }
+  }
+  // Format tableau d'objets (records) — direct ou sous une clé
+  const records = Array.isArray(data)
+    ? data
+    : data.preview || data.records || data.sample || data.data
+
+  if (Array.isArray(records) && records.length > 0 && typeof records[0] === 'object') {
+    const columns = Object.keys(records[0])
+    const rows = records.map(r => columns.map(c => r[c]))
+    return { columns, rows }
+  }
+  // Format pandas orient=split  { index, columns, data }
+  if (Array.isArray(data.columns) && Array.isArray(data.data)) {
+    return { columns: data.columns, rows: data.data }
+  }
+  return null
+}
+
 const STEPS = [
-  { id: 'upload',   label: 'Upload Dataset',    icon: '📁' },
-  { id: 'quality',  label: 'Quality Analysis',  icon: '📊' },
-  { id: 'llm',      label: 'LLM Analysis',      icon: '🤖' },
-  { id: 'results',  label: 'Results',            icon: '✅' },
+  { id: 'upload',  label: 'Upload Dataset',   icon: '📁' },
+  { id: 'quality', label: 'Quality Analysis', icon: '📊' },
+  { id: 'llm',     label: 'LLM Analysis',     icon: '🤖' },
+  { id: 'results', label: 'Results',           icon: '✅' },
 ]
 
-export default function DataQuality() {
+// activeFile et setActiveFile viennent de App.jsx — ils persistent entre modules
+export default function DataQuality({ activeFile, setActiveFile }) {
   const [currentStep, setCurrentStep] = useState(0)
 
-  // Data
-  const [file, setFile]                     = useState(null)
-  const [dragging, setDragging]             = useState(false)
-  const [loading, setLoading]               = useState(false)
-  const [loadingMsg, setLoadingMsg]         = useState('')
-  const [qualityData, setQualityData]       = useState(null)
-  const [llmAnalysis, setLlmAnalysis]       = useState(null)
-  const [systemResult, setSystemResult]     = useState(null)
-  const [showTextDesc, setShowTextDesc]     = useState(false)
+  // Upload local (avant confirmation)
+  const [pendingFile, setPendingFile]   = useState(null)
+  const [dragging, setDragging]         = useState(false)
+
+  // Preview — stocke TOUTES les lignes reçues, slice à l'affichage
+  const [previewRows, setPreviewRows]   = useState(10)
+  const [allPreviewData, setAllPreviewData] = useState(null)  // { columns, rows: all }
+  const [previewLoading, setPreviewLoading] = useState(false)
+  const [previewError, setPreviewError] = useState(null)
+
+  // Analyses
+  const [loading, setLoading]           = useState(false)
+  const [loadingMsg, setLoadingMsg]     = useState('')
+  const [qualityData, setQualityData]   = useState(null)
+  const [llmAnalysis, setLlmAnalysis]   = useState(null)
+
+  // Description
+  const [showTextDesc, setShowTextDesc]       = useState(false)
   const [textDescription, setTextDescription] = useState('')
   const [descriptionFile, setDescriptionFile] = useState(null)
-  const [showConfirmation, setShowConfirmation] = useState(false)
-  const [pendingAction, setPendingAction]   = useState(null)
 
-  const fileInputRef    = useRef()
+  // Confirmation
+  const [showConfirmation, setShowConfirmation] = useState(false)
+  const [pendingAction, setPendingAction]       = useState(null)
+
+  const fileInputRef     = useRef()
   const descFileInputRef = useRef()
   const { openProfile, closeProfile, profileState } = useProfile()
 
-  // ── File handlers ───────────────────────────────────────────────────────────
+  // Les lignes à afficher = slice du total reçu
+  const displayedRows = allPreviewData
+    ? { columns: allPreviewData.columns, rows: allPreviewData.rows.slice(0, previewRows) }
+    : null
+
+  // ── Handlers fichier ────────────────────────────────────────────────────────
   const handleFileChange = (e) => {
     const f = e.target.files[0]
-    if (f) { setFile(f); setQualityData(null) }
+    if (f) {
+      setPendingFile(f)
+      setAllPreviewData(null)
+      setPreviewError(null)
+    }
   }
 
   const handleDrop = (e) => {
     e.preventDefault(); setDragging(false)
     const f = e.dataTransfer.files[0]
-    if (f) { setFile(f); setQualityData(null) }
+    if (f) {
+      setPendingFile(f)
+      setAllPreviewData(null)
+      setPreviewError(null)
+    }
   }
 
-  const clearFile = () => {
-    setFile(null); setQualityData(null)
+  const confirmDataset = () => {
+    setActiveFile(pendingFile)
+    setPendingFile(null)
+    setQualityData(null)
+    setLlmAnalysis(null)
+    setAllPreviewData(null)
+  }
+
+  const removeDataset = () => {
+    setActiveFile(null)
+    setPendingFile(null)
+    setAllPreviewData(null)
+    setPreviewError(null)
+    setQualityData(null)
+    setLlmAnalysis(null)
     if (fileInputRef.current) fileInputRef.current.value = ''
   }
 
-  const handleDescFileChange = (e) => {
-    const f = e.target.files[0]
-    if (f) setDescriptionFile(f)
+  const changeDataset = () => {
+    setActiveFile(null)
+    setPendingFile(null)
+    setAllPreviewData(null)
+    setPreviewError(null)
+    if (fileInputRef.current) fileInputRef.current.value = ''
   }
 
-  // ── API calls ───────────────────────────────────────────────────────────────
+  // ── Aperçu rapide ─────────────────────────────────────────────────────────
+  // Envoie n_rows=500 pour récupérer un max de lignes côté serveur,
+  // puis on slice à previewRows côté frontend (réponse instantanée au changement)
+  const runPreview = async () => {
+    const f = activeFile || pendingFile
+    if (!f) return
+    setPreviewLoading(true)
+    setPreviewError(null)
+    setAllPreviewData(null)
+    const fd = new FormData()
+    fd.append('file', f)
+    fd.append('n_rows', 500)   // récupère jusqu'à 500 lignes côté serveur
+    try {
+      const res = await fetch('/api/data-quality/preview', { method: 'POST', body: fd })
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}))
+        setPreviewError(err.error || `Erreur HTTP ${res.status}`)
+      } else {
+        const data = await res.json()
+        const parsed = parsePreview(data)
+        if (parsed) setAllPreviewData(parsed)
+        else setPreviewError('Format de réponse non reconnu. Vérifier la console.')
+      }
+    } catch (e) {
+      setPreviewError(e.message)
+    }
+    setPreviewLoading(false)
+  }
+
+  // ── Rapport qualité (indépendant du LLM) ───────────────────────────────────
   const runReport = async () => {
-    if (!file) return
+    if (!activeFile) return
     setLoading(true); setLoadingMsg('Analyse qualité en cours...')
     const fd = new FormData()
-    fd.append('file', file)
+    fd.append('file', activeFile)
     if (textDescription.trim()) fd.append('description', textDescription)
     if (descriptionFile) fd.append('descriptionFile', descriptionFile)
     try {
@@ -73,23 +172,19 @@ export default function DataQuality() {
         setQualityData({ error: err.error || `Erreur HTTP ${res.status}` })
       } else {
         const data = await res.json()
-        if (data.success) {
-          setQualityData(data)
-          setLoadingMsg('Analyse LLM en cours...')
-          await runLlmAnalysis(file)
-        } else {
-          setQualityData({ error: data.error || 'Erreur inconnue' })
-        }
+        setQualityData(data.success ? data : { error: data.error || 'Erreur inconnue' })
       }
-    } catch (e) {
-      setQualityData({ error: e.message })
-    }
+    } catch (e) { setQualityData({ error: e.message }) }
     setLoading(false)
+    setLoadingMsg('')
   }
 
-  const runLlmAnalysis = async (dataFile) => {
+  // ── Analyse LLM (indépendante) ─────────────────────────────────────────────
+  const runLlm = async () => {
+    if (!activeFile) return
+    setLoading(true); setLoadingMsg('Analyse LLM en cours...')
     const fd = new FormData()
-    fd.append('file', dataFile || file)
+    fd.append('file', activeFile)
     if (textDescription.trim()) fd.append('description', textDescription)
     try {
       const res = await fetch('/api/data-quality/llm-analyze', { method: 'POST', body: fd })
@@ -101,356 +196,421 @@ export default function DataQuality() {
         if (data.success) {
           const raw = data.analysis || {}
           setLlmAnalysis({
-            ...raw,
-            ...raw.executed,
-            ...raw.initial,
+            ...raw, ...raw.executed, ...raw.initial,
             overall_assessment: raw.overall_assessment || raw.initial?.overall_assessment || raw.executed?.overall_assessment,
             recommendations: raw.recommendations || raw.initial?.recommendations || [],
             coherence: raw.coherence || raw.consistency || raw.executed?.consistency || raw.initial?.consistency,
           })
         } else setLlmAnalysis({ error: data.error || 'Erreur inconnue' })
       }
-    } catch (e) {
-      setLlmAnalysis({ error: e.message })
-    }
-  }
-
-  const runPreview = async () => {
-    if (!file) return
-    setLoading(true); setLoadingMsg('Chargement aperçu...')
-    const fd = new FormData()
-    fd.append('file', file)
-    try {
-      const res = await fetch('/api/data-quality/preview', { method: 'POST', body: fd })
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}))
-        setSystemResult({ error: err.error || `Erreur HTTP ${res.status}` })
-      } else {
-        setSystemResult(await res.json())
-      }
-    } catch (e) {
-      setSystemResult({ error: e.message })
-    }
+    } catch (e) { setLlmAnalysis({ error: e.message }) }
     setLoading(false)
+    setLoadingMsg('')
   }
 
-  // ── Confirmation ─────────────────────────────────────────────────────────────
+  // ── Confirmation dialog ────────────────────────────────────────────────────
   const confirmAndExecute = async () => {
     setShowConfirmation(false)
-    if (pendingAction === 'profile') openProfile(file)
+    if (pendingAction === 'profile') openProfile(activeFile)
     else if (pendingAction === 'report') await runReport()
     setPendingAction(null)
   }
 
-  // ── Navigation ───────────────────────────────────────────────────────────────
   const goToStep = (i) => { if (i >= 0 && i < STEPS.length) setCurrentStep(i) }
-  const nextStep = () => goToStep(currentStep + 1)
-  const prevStep = () => goToStep(currentStep - 1)
 
-  // ── Step content ─────────────────────────────────────────────────────────────
+  // ── Render ─────────────────────────────────────────────────────────────────
   const renderStep = () => {
     switch (currentStep) {
 
-      case 0: // Upload
+      // ─────────────────────────────────────────────────────────────────────
+      case 0: // UPLOAD
         return (
           <div className="step-content">
-            <div className="upload-section">
-              <div
-                className={`upload-area ${dragging ? 'dragging' : ''}`}
-                onDragOver={(e) => { e.preventDefault(); setDragging(true) }}
-                onDragLeave={() => setDragging(false)}
-                onDrop={handleDrop}
-                onClick={() => fileInputRef.current?.click()}
-              >
-                <div className="upload-content">
-                  <div className="upload-icon">📁</div>
-                  <h3>Upload votre dataset</h3>
-                  <p>Glissez-déposez votre fichier CSV, Excel, JSON ou Parquet</p>
-                  <p className="upload-or">— ou —</p>
-                  <button className="upload-btn" onClick={(e) => { e.stopPropagation(); fileInputRef.current?.click() }}>
-                    Parcourir les fichiers
-                  </button>
-                  <input
-                    ref={fileInputRef}
-                    type="file"
-                    accept=".csv,.xlsx,.xls,.json,.parquet"
-                    onChange={handleFileChange}
-                    style={{ display: 'none' }}
-                  />
-                  <p style={{ fontSize: '0.65rem', color: 'var(--muted)', marginTop: '0.5rem' }}>
-                    CSV · XLSX · JSON · PARQUET
-                  </p>
+
+            {/* ── Dataset actif ── */}
+            {activeFile ? (
+              <div className="active-dataset">
+                <div className="active-dataset-header">
+                  <div className="active-indicator">
+                    <span className="active-dot" />
+                    <span className="active-label">Dataset actif</span>
+                  </div>
+                  <div className="active-actions">
+                    <button className="btn-change" onClick={changeDataset}>🔄 Changer</button>
+                    <button className="btn-remove" onClick={removeDataset}>✕ Retirer</button>
+                  </div>
+                </div>
+                <div className="active-file-info">
+                  <span className="active-file-icon">📄</span>
+                  <div className="active-file-meta">
+                    <span className="active-file-name">{activeFile.name}</span>
+                    <span className="active-file-size">{fmtBytes(activeFile.size)}</span>
+                  </div>
                 </div>
               </div>
-
-              {file && (
-                <div className="file-info">
-                  <span>📄</span>
-                  <span className="file-name">{file.name}</span>
-                  <span className="file-size">{fmtBytes(file.size)}</span>
-                  <button className="clear-btn" onClick={(e) => { e.stopPropagation(); clearFile() }}>✕</button>
-                </div>
-              )}
-
-              {/* Description optionnelle */}
-              <div style={{ background: 'rgba(0,212,170,0.04)', border: '1px solid rgba(0,212,170,0.15)', borderRadius: '8px', padding: '0.85rem', fontSize: '0.78rem' }}>
-                <span style={{ display: 'block', marginBottom: '0.5rem', color: 'var(--muted)' }}>
-                  ℹ Règles métiers pour le scoring (optionnel) :
-                </span>
-                <div style={{ display: 'flex', gap: '0.5rem' }}>
-                  <button
-                    className="btn-secondary"
-                    style={{ fontSize: '0.72rem', padding: '0.4rem 0.75rem' }}
-                    onClick={() => { setShowTextDesc(false); setDescriptionFile(null); descFileInputRef.current?.click() }}
-                  >
-                    📎 Fichier
-                  </button>
-                  <button
-                    className="btn-secondary"
-                    style={{ fontSize: '0.72rem', padding: '0.4rem 0.75rem' }}
-                    onClick={() => { setShowTextDesc(!showTextDesc); setDescriptionFile(null) }}
-                  >
-                    ✏️ Texte
-                  </button>
-                  {(showTextDesc || descriptionFile || textDescription) && (
-                    <button
-                      className="btn-secondary"
-                      style={{ fontSize: '0.72rem', padding: '0.4rem 0.75rem', color: 'var(--accent3)', borderColor: 'rgba(255,107,107,0.3)' }}
-                      onClick={() => { setShowTextDesc(false); setTextDescription(''); setDescriptionFile(null); if (descFileInputRef.current) descFileInputRef.current.value = '' }}
-                    >
-                      ✕ Effacer
+            ) : (
+              /* ── Zone d'upload ── */
+              <div className="upload-section">
+                <div
+                  className={`upload-area ${dragging ? 'dragging' : ''}`}
+                  onDragOver={(e) => { e.preventDefault(); setDragging(true) }}
+                  onDragLeave={() => setDragging(false)}
+                  onDrop={handleDrop}
+                  onClick={() => !pendingFile && fileInputRef.current?.click()}
+                  style={{ cursor: pendingFile ? 'default' : 'pointer' }}
+                >
+                  <div className="upload-content">
+                    <div className="upload-icon">📁</div>
+                    <h3>Upload votre dataset</h3>
+                    <p>Glissez-déposez votre fichier ici</p>
+                    <p className="upload-or">— ou —</p>
+                    <button className="upload-btn" onClick={(e) => { e.stopPropagation(); fileInputRef.current?.click() }}>
+                      Parcourir les fichiers
                     </button>
-                  )}
+                    <p style={{ fontSize: '0.63rem', color: 'var(--muted)', marginTop: '0.5rem' }}>
+                      CSV · XLSX · JSON · PARQUET
+                    </p>
+                  </div>
                 </div>
-                <input ref={descFileInputRef} type="file" accept=".txt,.md,.pdf,.doc,.docx" onChange={handleDescFileChange} style={{ display: 'none' }} />
 
-                {descriptionFile && (
-                  <div style={{ marginTop: '0.5rem', fontSize: '0.72rem', color: 'var(--accent2)' }}>
-                    📄 {descriptionFile.name}
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept=".csv,.xlsx,.xls,.json,.parquet"
+                  onChange={handleFileChange}
+                  style={{ display: 'none' }}
+                />
+
+                {/* Fichier en attente de confirmation */}
+                {pendingFile && (
+                  <div className="pending-file">
+                    <div className="pending-file-row">
+                      <span className="pending-file-icon">📄</span>
+                      <div className="pending-file-meta">
+                        <span className="pending-file-name">{pendingFile.name}</span>
+                        <span className="pending-file-size">{fmtBytes(pendingFile.size)}</span>
+                      </div>
+                      <button className="clear-btn" onClick={() => { setPendingFile(null); if (fileInputRef.current) fileInputRef.current.value = '' }}>✕</button>
+                    </div>
+                    <button className="btn-set-active" onClick={confirmDataset}>
+                      ✓ Définir comme dataset actif
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* ── Description ── */}
+            <div className="desc-panel">
+              <div className="desc-panel-title">
+                <span>ℹ</span>
+                <span>Règles métiers pour le scoring (optionnel)</span>
+              </div>
+              <div className="desc-panel-btns">
+                <button className="btn-secondary" onClick={() => { setShowTextDesc(false); setDescriptionFile(null); descFileInputRef.current?.click() }}>
+                  📎 Fichier
+                </button>
+                <button className="btn-secondary" onClick={() => { setShowTextDesc(p => !p); setDescriptionFile(null) }}>
+                  ✏️ Texte
+                </button>
+                {(showTextDesc || descriptionFile || textDescription) && (
+                  <button
+                    className="btn-secondary"
+                    style={{ color: 'var(--accent3)', borderColor: 'rgba(255,107,107,0.3)' }}
+                    onClick={() => { setShowTextDesc(false); setTextDescription(''); setDescriptionFile(null); if (descFileInputRef.current) descFileInputRef.current.value = '' }}
+                  >
+                    ✕
+                  </button>
+                )}
+              </div>
+              <input ref={descFileInputRef} type="file" accept=".txt,.md,.pdf,.doc,.docx"
+                onChange={(e) => { const f = e.target.files[0]; if (f) setDescriptionFile(f) }}
+                style={{ display: 'none' }} />
+              {descriptionFile && <div className="desc-file-tag">📄 {descriptionFile.name}</div>}
+              {showTextDesc && (
+                <textarea
+                  className="desc-textarea"
+                  placeholder="Description du dataset et règles métiers..."
+                  value={textDescription}
+                  onChange={(e) => setTextDescription(e.target.value)}
+                  rows={3}
+                />
+              )}
+            </div>
+
+            {/* ── Aperçu rapide (uniquement ici) ── */}
+            {(activeFile || pendingFile) && (
+              <div className="preview-panel">
+                <div className="preview-panel-header">
+                  <span className="preview-title">👁 Aperçu rapide</span>
+                  <div className="preview-controls">
+                    <label className="preview-rows-label">Lignes :</label>
+                    <input
+                      type="number"
+                      className="preview-rows-input"
+                      value={previewRows}
+                      min={1}
+                      max={allPreviewData ? allPreviewData.rows.length : 500}
+                      onChange={(e) => setPreviewRows(Math.max(1, parseInt(e.target.value, 10) || 1))}
+                    />
+                    <button className="btn-preview" onClick={runPreview} disabled={previewLoading}>
+                      {previewLoading ? '🔄' : '▶ Charger'}
+                    </button>
+                  </div>
+                </div>
+
+                {allPreviewData && (
+                  <div style={{ fontSize: '0.63rem', color: 'var(--muted)' }}>
+                    Affichage : {Math.min(previewRows, allPreviewData.rows.length)} / {allPreviewData.rows.length} lignes chargées
+                    {allPreviewData.rows.length === 500 && ' (max 500 — changer pour voir plus)'}
                   </div>
                 )}
 
-                {showTextDesc && (
-                  <textarea
-                    style={{ marginTop: '0.5rem', background: 'var(--bg3)', border: '1px solid var(--border)', borderRadius: '6px', padding: '0.6rem', color: 'var(--text)', fontFamily: 'var(--font-mono)', fontSize: '0.73rem', resize: 'vertical', width: '100%', minHeight: '80px' }}
-                    placeholder="Description du dataset et règles métiers..."
-                    value={textDescription}
-                    onChange={(e) => setTextDescription(e.target.value)}
-                  />
+                {previewLoading && (
+                  <div className="loader" style={{ padding: '0.5rem 0' }}>
+                    <div className="spinner" /> Chargement...
+                  </div>
+                )}
+
+                {previewError && (
+                  <div className="alert-item alert-warning">
+                    <span className="alert-icon">⚠</span>
+                    <span className="alert-msg">{previewError}</span>
+                  </div>
+                )}
+
+                {displayedRows && (
+                  <div className="preview-table-wrap">
+                    <div className="preview-scroll">
+                      <table className="preview-table">
+                        <thead>
+                          <tr>
+                            <th className="preview-th-idx">#</th>
+                            {displayedRows.columns.map((col, i) => <th key={i}>{col}</th>)}
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {displayedRows.rows.map((row, ri) => (
+                            <tr key={ri}>
+                              <td className="preview-td-idx">{ri + 1}</td>
+                              {row.map((cell, ci) => (
+                                <td key={ci} title={String(cell ?? '')}>
+                                  {cell === null || cell === undefined
+                                    ? <span className="cell-null">null</span>
+                                    : String(cell).length > 40 ? String(cell).slice(0, 38) + '…' : String(cell)
+                                  }
+                                </td>
+                              ))}
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
                 )}
               </div>
-            </div>
+            )}
           </div>
         )
 
-      case 1: // Quality Analysis
+      // ─────────────────────────────────────────────────────────────────────
+      case 1: // QUALITY ANALYSIS
         return (
           <div className="step-content">
             <div className="analysis-section">
               <h3>Analyse de la qualité des données</h3>
-              <p style={{ fontSize: '0.78rem', color: 'var(--muted)' }}>
-                Lance un rapport complet : complétude, unicité, validité, cohérence, précision.
+              <p style={{ fontSize: '0.76rem', color: 'var(--muted)' }}>
+                Rapport complet : complétude, unicité, validité, cohérence, précision.
               </p>
 
-              <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap' }}>
-                <button
-                  className="action-btn"
-                  onClick={() => { setPendingAction('report'); setShowConfirmation(true) }}
-                  disabled={!file || loading}
-                >
-                  {loading ? '🔄 Analyse...' : '🔍 Rapport complet'}
-                </button>
-                <button
-                  className="btn-secondary"
-                  style={{ fontSize: '0.78rem' }}
-                  onClick={runPreview}
-                  disabled={!file || loading}
-                >
-                  👁 Aperçu rapide
-                </button>
-                <button
-                  className="btn-profile"
-                  style={{ fontSize: '0.78rem' }}
-                  onClick={() => { setPendingAction('profile'); setShowConfirmation(true) }}
-                  disabled={!file || loading}
-                >
-                  📊 Rapport détaillé
-                </button>
-              </div>
-
-              {loading && (
-                <div className="loader">
-                  <div className="spinner" />
-                  {loadingMsg}
-                </div>
-              )}
-
-              {qualityData && !qualityData.error && (
-                <div className="results-container">
-                  <ScoreDisplay data={qualityData} />
-                </div>
-              )}
-              {qualityData?.error && (
-                <div className="alert-item alert-warning" style={{ marginTop: '0.75rem' }}>
+              {!activeFile ? (
+                <div className="alert-item alert-warning">
                   <span className="alert-icon">⚠</span>
-                  <span className="alert-msg">{qualityData.error}</span>
+                  <span className="alert-msg">Aucun dataset actif — allez à l'étape Upload.</span>
                 </div>
+              ) : (
+                <>
+                  <div className="active-dataset-mini">
+                    <span className="active-dot" />
+                    <span style={{ fontSize: '0.73rem', color: 'var(--muted)' }}>Dataset :</span>
+                    <span style={{ fontSize: '0.73rem', color: 'var(--text)', fontWeight: 600 }}>{activeFile.name}</span>
+                  </div>
+
+                  <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap' }}>
+                    <button
+                      className="action-btn"
+                      onClick={() => { setPendingAction('report'); setShowConfirmation(true) }}
+                      disabled={loading}
+                    >
+                      {loading && loadingMsg.includes('qualité') ? '🔄 Analyse...' : '🔍 Rapport complet'}
+                    </button>
+                    <button
+                      className="btn-profile"
+                      onClick={() => { setPendingAction('profile'); setShowConfirmation(true) }}
+                      disabled={loading}
+                    >
+                      📊 Rapport détaillé
+                    </button>
+                  </div>
+
+                  {loading && loadingMsg && (
+                    <div className="loader"><div className="spinner" />{loadingMsg}</div>
+                  )}
+
+                  {qualityData && !qualityData.error && (
+                    <div className="results-container"><ScoreDisplay data={qualityData} /></div>
+                  )}
+                  {qualityData?.error && (
+                    <div className="alert-item alert-warning" style={{ marginTop: '0.75rem' }}>
+                      <span className="alert-icon">⚠</span>
+                      <span className="alert-msg">{qualityData.error}</span>
+                    </div>
+                  )}
+                </>
               )}
             </div>
           </div>
         )
 
-      case 2: // LLM Analysis
+      // ─────────────────────────────────────────────────────────────────────
+      case 2: // LLM ANALYSIS
         return (
           <div className="step-content">
             <div className="llm-section">
               <h3>Analyse LLM — Problèmes potentiels</h3>
-              <p style={{ fontSize: '0.78rem', color: 'var(--muted)' }}>
+              <p style={{ fontSize: '0.76rem', color: 'var(--muted)' }}>
                 Détection intelligente d'anomalies, incohérences et recommandations.
               </p>
 
-              <button
-                className="action-btn llm-btn"
-                onClick={() => runLlmAnalysis(null)}
-                disabled={!file || loading}
-              >
-                {loading ? '🔄 Analyse LLM...' : '🤖 Lancer analyse LLM'}
-              </button>
-
-              {loading && (
-                <div className="loader">
-                  <div className="spinner" />
-                  {loadingMsg}
-                </div>
-              )}
-
-              {llmAnalysis && !llmAnalysis.error && (
-                <div className="llm-results">
-                  {llmAnalysis.overall_assessment && (
-                    <div className="llm-assessment">
-                      <h4>Évaluation globale</h4>
-                      <p>{llmAnalysis.overall_assessment}</p>
-                    </div>
-                  )}
-
-                  {['accuracy', 'coherence', 'validity'].map(pillar => {
-                    const data = llmAnalysis[pillar]
-                    if (!data?.issues?.length) return null
-                    const names = { accuracy: '🎯 Précision', coherence: '⚙ Cohérence', validity: '✅ Validité' }
-                    const avgPct = data.issues.reduce((s, i) => s + (i.percentage || 0), 0) / data.issues.length
-                    const score = Math.max(0, 100 - avgPct)
-                    const color = score >= 80 ? '#00d4aa' : score >= 60 ? '#f59e0b' : '#ff6b6b'
-                    return (
-                      <div key={pillar} className="pillar-result">
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '0.6rem' }}>
-                          <h5>{names[pillar]}</h5>
-                          <span style={{ background: color + '20', color, padding: '1px 8px', borderRadius: '10px', fontSize: '0.65rem', fontWeight: 600 }}>
-                            {score.toFixed(1)}%
-                          </span>
-                        </div>
-                        {data.issues.map((issue, idx) => (
-                          <div key={idx} className="issue">
-                            <span className={`severity ${issue.severity}`}>{issue.severity}</span>
-                            <span>{issue.description || issue.title}</span>
-                          </div>
-                        ))}
-                      </div>
-                    )
-                  })}
-
-                  {llmAnalysis.recommendations?.length > 0 && (
-                    <div className="pillar-result">
-                      <h5 style={{ marginBottom: '0.6rem' }}>💡 Recommandations</h5>
-                      {llmAnalysis.recommendations.map((rec, idx) => (
-                        <div key={idx} className="issue">
-                          <span className={`severity ${rec.priority}`}>{rec.priority}</span>
-                          <span>{rec.action}</span>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-
-                  {!llmAnalysis.recommendations?.length && !['accuracy','coherence','validity'].some(p => llmAnalysis[p]?.issues?.length) && (
-                    <div className="alert-item alert-success">
-                      <span className="alert-icon">✓</span>
-                      <span>Aucune anomalie significative détectée.</span>
-                    </div>
-                  )}
-                </div>
-              )}
-
-              {llmAnalysis?.error && (
-                <div className="alert-item alert-warning" style={{ marginTop: '0.75rem' }}>
+              {!activeFile ? (
+                <div className="alert-item alert-warning">
                   <span className="alert-icon">⚠</span>
-                  <span className="alert-msg">LLM: {llmAnalysis.error}</span>
+                  <span className="alert-msg">Aucun dataset actif — allez à l'étape Upload.</span>
                 </div>
+              ) : (
+                <>
+                  <div className="active-dataset-mini">
+                    <span className="active-dot" />
+                    <span style={{ fontSize: '0.73rem', color: 'var(--muted)' }}>Dataset :</span>
+                    <span style={{ fontSize: '0.73rem', color: 'var(--text)', fontWeight: 600 }}>{activeFile.name}</span>
+                  </div>
+
+                  <button className="action-btn llm-btn" onClick={runLlm} disabled={loading}>
+                    {loading && loadingMsg.includes('LLM') ? '🔄 Analyse LLM...' : '🤖 Lancer analyse LLM'}
+                  </button>
+
+                  {loading && loadingMsg && (
+                    <div className="loader"><div className="spinner" />{loadingMsg}</div>
+                  )}
+
+                  {llmAnalysis && !llmAnalysis.error && (
+                    <div className="llm-results">
+                      {llmAnalysis.overall_assessment && (
+                        <div className="llm-assessment">
+                          <h4>Évaluation globale</h4>
+                          <p>{llmAnalysis.overall_assessment}</p>
+                        </div>
+                      )}
+
+                      {['accuracy', 'coherence', 'validity'].map(pillar => {
+                        const d = llmAnalysis[pillar]
+                        if (!d?.issues?.length) return null
+                        const names = { accuracy: '🎯 Précision', coherence: '⚙ Cohérence', validity: '✅ Validité' }
+                        const avg = d.issues.reduce((s, i) => s + (i.percentage || 0), 0) / d.issues.length
+                        const score = Math.max(0, 100 - avg)
+                        const color = score >= 80 ? '#00d4aa' : score >= 60 ? '#f59e0b' : '#ff6b6b'
+                        return (
+                          <div key={pillar} className="pillar-result">
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '0.6rem' }}>
+                              <h5>{names[pillar]}</h5>
+                              <span style={{ background: color + '20', color, padding: '1px 8px', borderRadius: '10px', fontSize: '0.63rem', fontWeight: 600 }}>
+                                {score.toFixed(1)}%
+                              </span>
+                            </div>
+                            {d.issues.map((issue, idx) => (
+                              <div key={idx} className="issue">
+                                <span className={`severity ${issue.severity}`}>{issue.severity}</span>
+                                <span>{issue.description || issue.title}</span>
+                              </div>
+                            ))}
+                          </div>
+                        )
+                      })}
+
+                      {llmAnalysis.recommendations?.length > 0 && (
+                        <div className="pillar-result">
+                          <h5 style={{ marginBottom: '0.6rem' }}>💡 Recommandations</h5>
+                          {llmAnalysis.recommendations.map((rec, idx) => (
+                            <div key={idx} className="issue">
+                              <span className={`severity ${rec.priority}`}>{rec.priority}</span>
+                              <span>{rec.action}</span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+
+                      {!llmAnalysis.recommendations?.length && !['accuracy','coherence','validity'].some(p => llmAnalysis[p]?.issues?.length) && (
+                        <div className="alert-item alert-success">
+                          <span className="alert-icon">✓</span>
+                          <span>Aucune anomalie significative détectée.</span>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {llmAnalysis?.error && (
+                    <div className="alert-item alert-warning" style={{ marginTop: '0.75rem' }}>
+                      <span className="alert-icon">⚠</span>
+                      <span className="alert-msg">LLM : {llmAnalysis.error}</span>
+                    </div>
+                  )}
+                </>
               )}
             </div>
           </div>
         )
 
-      case 3: // Results
+      // ─────────────────────────────────────────────────────────────────────
+      case 3: // RESULTS
         return (
           <div className="step-content">
             <div className="results-section">
-              <h3>Résultats complets</h3>
-              <p style={{ fontSize: '0.78rem', color: 'var(--muted)' }}>
-                Aperçu rapide des données brutes et statistiques système.
-              </p>
+              <h3>Récapitulatif de l'analyse</h3>
 
-              <button
-                className="action-btn"
-                onClick={runPreview}
-                disabled={!file || loading}
-              >
-                {loading ? '🔄 Chargement...' : '📋 Aperçu des données'}
-              </button>
-
-              {loading && (
-                <div className="loader">
-                  <div className="spinner" />
-                  {loadingMsg}
+              {activeFile && (
+                <div className="active-dataset-mini">
+                  <span className="active-dot" />
+                  <span style={{ fontSize: '0.73rem', color: 'var(--muted)' }}>Dataset :</span>
+                  <span style={{ fontSize: '0.73rem', color: 'var(--text)', fontWeight: 600 }}>{activeFile.name}</span>
+                  <span style={{ fontSize: '0.68rem', color: 'var(--muted)' }}>({fmtBytes(activeFile.size)})</span>
                 </div>
               )}
 
-              {systemResult && !systemResult.error && (
-                <pre className="raw-result">
-                  {JSON.stringify(systemResult, null, 2)}
-                </pre>
+              <div className="results-summary">
+                <div className={`summary-row ${qualityData && !qualityData.error ? 'done' : ''}`}>
+                  <span className="summary-icon">{qualityData && !qualityData.error ? '✓' : '○'}</span>
+                  <span className="summary-name">Rapport qualité</span>
+                  <span className="summary-status">
+                    {qualityData && !qualityData.error ? 'Complété' : qualityData?.error ? 'Erreur' : 'Non lancé'}
+                  </span>
+                </div>
+                <div className={`summary-row ${llmAnalysis && !llmAnalysis.error ? 'done' : ''}`}>
+                  <span className="summary-icon">{llmAnalysis && !llmAnalysis.error ? '✓' : '○'}</span>
+                  <span className="summary-name">Analyse LLM</span>
+                  <span className="summary-status">
+                    {llmAnalysis && !llmAnalysis.error ? 'Complété' : llmAnalysis?.error ? 'Erreur' : 'Non lancé'}
+                  </span>
+                </div>
+              </div>
+
+              {qualityData && !qualityData.error && (
+                <div className="results-container"><ScoreDisplay data={qualityData} /></div>
               )}
-              {systemResult?.error && (
-                <div className="alert-item alert-warning" style={{ marginTop: '0.75rem' }}>
+
+              {!activeFile && (
+                <div className="alert-item alert-warning">
                   <span className="alert-icon">⚠</span>
-                  <span className="alert-msg">{systemResult.error}</span>
-                </div>
-              )}
-
-              {/* Résumé final */}
-              {(qualityData || llmAnalysis) && (
-                <div style={{ marginTop: '1.5rem', background: 'rgba(0,212,170,0.06)', border: '1px solid rgba(0,212,170,0.2)', borderRadius: '10px', padding: '1.25rem' }}>
-                  <div style={{ fontSize: '0.72rem', color: 'var(--accent2)', fontWeight: 600, marginBottom: '0.75rem', textTransform: 'uppercase', letterSpacing: '0.1em' }}>
-                    ✅ Récapitulatif de l'analyse
-                  </div>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', fontSize: '0.78rem' }}>
-                    {qualityData && !qualityData.error && (
-                      <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                        <span style={{ color: 'var(--muted)' }}>Rapport qualité</span>
-                        <span style={{ color: 'var(--accent2)' }}>✓ Complété</span>
-                      </div>
-                    )}
-                    {llmAnalysis && !llmAnalysis.error && (
-                      <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                        <span style={{ color: 'var(--muted)' }}>Analyse LLM</span>
-                        <span style={{ color: 'var(--accent2)' }}>✓ Complété</span>
-                      </div>
-                    )}
-                    {file && (
-                      <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                        <span style={{ color: 'var(--muted)' }}>Dataset</span>
-                        <span style={{ color: 'var(--text)' }}>{file.name}</span>
-                      </div>
-                    )}
-                  </div>
+                  <span className="alert-msg">Aucun dataset actif — retournez à l'étape Upload.</span>
                 </div>
               )}
             </div>
@@ -468,31 +628,30 @@ export default function DataQuality() {
         <p>Analyse complète de la qualité des données avec insights IA</p>
       </div>
 
-      {/* Steps Progress */}
+      {/* Steps progress */}
       <div className="steps-progress">
         {STEPS.map((step, i) => (
-          <div
+          <button
             key={step.id}
             className={`step ${i === currentStep ? 'active' : ''} ${i < currentStep ? 'completed' : ''}`}
             onClick={() => goToStep(i)}
           >
             <span className="step-icon">{i < currentStep ? '✓' : step.icon}</span>
             <span className="step-label">{step.label}</span>
-          </div>
+          </button>
         ))}
       </div>
 
-      {/* Content */}
+      {/* Contenu */}
       <div className="content-area">
         {renderStep()}
       </div>
 
-      {/* Navigation Buttons */}
+      {/* Nav étapes */}
       <div className="navigation-buttons">
-        <button className="nav-btn prev-btn" onClick={prevStep} disabled={currentStep === 0}>
+        <button className="nav-btn prev-btn" onClick={() => goToStep(currentStep - 1)} disabled={currentStep === 0}>
           ← Précédent
         </button>
-
         <div className="step-indicator">
           <span>Étape {currentStep + 1} / {STEPS.length}</span>
           <div className="step-dots">
@@ -506,34 +665,30 @@ export default function DataQuality() {
             ))}
           </div>
         </div>
-
-        <button className="nav-btn next-btn" onClick={nextStep} disabled={currentStep === STEPS.length - 1}>
+        <button className="nav-btn next-btn" onClick={() => goToStep(currentStep + 1)} disabled={currentStep === STEPS.length - 1}>
           Suivant →
         </button>
       </div>
 
-      {/* Confirmation Dialog */}
+      {/* Confirmation */}
       {showConfirmation && (
         <div className="loading-overlay" onClick={() => setShowConfirmation(false)}>
-          <div style={{ background: 'var(--bg2)', border: '1px solid var(--border)', borderRadius: '12px', padding: '1.5rem', maxWidth: '420px', width: '90%', boxShadow: '0 20px 60px rgba(0,0,0,0.5)' }}
-               onClick={e => e.stopPropagation()}>
-            <h3 style={{ fontFamily: 'var(--font-sans)', fontSize: '1rem', fontWeight: 700, marginBottom: '1.25rem' }}>
-              ✓ Confirmer l'action
-            </h3>
-            <div style={{ background: 'var(--bg3)', border: '1px solid var(--border)', borderRadius: '8px', padding: '1rem', marginBottom: '1.25rem', display: 'flex', flexDirection: 'column', gap: '0.6rem', fontSize: '0.75rem' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span style={{ color: 'var(--muted)' }}>Dataset</span>
-                <span>{file?.name} ({fmtBytes(file?.size || 0)})</span>
+          <div className="confirm-dialog" onClick={e => e.stopPropagation()}>
+            <h3>✓ Confirmer l'action</h3>
+            <div className="confirm-summary">
+              <div className="confirm-row">
+                <span>Dataset</span>
+                <span>{activeFile?.name} ({fmtBytes(activeFile?.size || 0)})</span>
               </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span style={{ color: 'var(--muted)' }}>Description</span>
-                <span style={{ color: textDescription.trim() ? 'var(--text)' : descriptionFile ? 'var(--text)' : 'var(--muted)' }}>
+              <div className="confirm-row">
+                <span>Description</span>
+                <span style={{ color: textDescription.trim() || descriptionFile ? 'var(--text)' : 'var(--muted)' }}>
                   {textDescription.trim() ? `Texte (${textDescription.length} car.)` : descriptionFile ? descriptionFile.name : 'Aucune'}
                 </span>
               </div>
             </div>
             <div style={{ display: 'flex', gap: '0.75rem' }}>
-              <button className="btn-secondary" style={{ flex: 1, justifyContent: 'center', display: 'flex' }} onClick={() => setShowConfirmation(false)}>
+              <button className="btn-secondary" style={{ flex: 1, display: 'flex', justifyContent: 'center' }} onClick={() => setShowConfirmation(false)}>
                 Annuler
               </button>
               <button className="btn-confirm" style={{ flex: 1 }} onClick={confirmAndExecute} disabled={loading}>
