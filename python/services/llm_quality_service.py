@@ -56,6 +56,8 @@ def build_llm_summary(df: pd.DataFrame, description: str = "", n_rows: int = 5) 
         },
     }
 
+    logger.debug(f"Building LLM summary | shape={df.shape} | description_len={len(description)}")
+
     for col in df.columns:
         series = df[col]
         n_unique = int(series.nunique())

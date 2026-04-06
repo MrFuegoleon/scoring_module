@@ -186,6 +186,7 @@ export default function DataQuality({ activeFile, setActiveFile }) {
     const fd = new FormData()
     fd.append('file', activeFile)
     if (textDescription.trim()) fd.append('description', textDescription)
+    if (descriptionFile) fd.append('descriptionFile', descriptionFile)
     try {
       const res = await fetch('/api/data-quality/llm-analyze', { method: 'POST', body: fd })
       if (!res.ok) {

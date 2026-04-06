@@ -5,6 +5,10 @@ Compartiment 1 — Data Quality
 Endpoints exposés à Express.
 """
 
+import io
+import pdfplumber
+import docx
+
 from flask import Blueprint, request, jsonify, Response
 from services.data_quality_service import (
     load_dataframe,
@@ -20,6 +24,29 @@ from services.llm_quality_service import (
 )
 
 data_quality_bp = Blueprint("data_quality", __name__)
+
+
+def _extract_text_from_file(file_storage) -> str:
+    """Extrait le texte d'un FileStorage selon son extension."""
+    name = (file_storage.filename or "").lower()
+    raw = file_storage.read()
+
+    if name.endswith(".pdf"):
+        with pdfplumber.open(io.BytesIO(raw)) as pdf:
+            return "\n".join(
+                page.extract_text() or "" for page in pdf.pages
+            ).strip()
+
+    if name.endswith(".docx"):
+        doc = docx.Document(io.BytesIO(raw))
+        return "\n".join(p.text for p in doc.paragraphs).strip()
+
+    if name.endswith(".doc"):
+        # .doc (ancien format binaire) — lecture texte brut dégradée
+        return raw.decode("utf-8", errors="ignore").strip()
+
+    # .txt, .md et tout autre format texte
+    return raw.decode("utf-8", errors="ignore").strip()
 
 
 # ── POST /api/data-quality/report ────────────────────────────────────────────
@@ -148,6 +175,14 @@ def llm_analyze():
             description = body.get("description", "")
         elif "description" in request.form:
             description = request.form.get("description", "")
+
+        if "descriptionFile" in request.files:
+            try:
+                file_text = _extract_text_from_file(request.files["descriptionFile"])
+                if file_text:
+                    description = (description + "\n\n" + file_text).strip() if description else file_text
+            except Exception:
+                pass  # extraction échouée — on continue sans
 
         llm_result = llm_quality_check(df, description=description)
         execution_result = execute_problems(df, llm_result.get("problems", []))

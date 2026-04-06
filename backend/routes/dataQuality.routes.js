@@ -83,40 +83,68 @@ router.post("/score", upload.single("file"), async (req, res) => {
 // ══════════════════════════════════════════════════════════════════════════════
 // POST /api/data-quality/report
 // Rapport qualité complet (overview + colonnes + score + alertes)
+// Accepte : file (requis), descriptionFile (optionnel), description (texte optionnel)
 // ══════════════════════════════════════════════════════════════════════════════
-router.post("/report", upload.single("file"), async (req, res) => {
-  if (!req.file) return res.status(400).json({ error: "Aucun fichier fourni" });
+router.post(
+  "/report",
+  upload.fields([{ name: "file", maxCount: 1 }, { name: "descriptionFile", maxCount: 1 }]),
+  async (req, res) => {
+    const file = req.files?.["file"]?.[0];
+    if (!file) return res.status(400).json({ error: "Aucun fichier fourni" });
 
-  try {
-    const data = await forwardFileToFlask(
-      "/api/data-quality/report",
-      req.file.path,
-      req.file.originalname,
-    );
-    res.json(data);
-  } catch (e) {
-    handleError(res, e);
-  }
-});
+    // Nettoyage du fichier description (non utilisé par Flask /report)
+    const descFile = req.files?.["descriptionFile"]?.[0];
+
+    try {
+      const data = await forwardFileToFlask(
+        "/api/data-quality/report",
+        file.path,
+        file.originalname,
+      );
+      if (descFile) fs.unlink(descFile.path, () => {});
+      res.json(data);
+    } catch (e) {
+      if (descFile) fs.unlink(descFile.path, () => {});
+      handleError(res, e);
+    }
+  },
+);
 
 // ══════════════════════════════════════════════════════════════════════════════
 // POST /api/data-quality/llm-analyze
 // LLM analysis (proxy vers Flask)
+// Accepte : file (requis), description (texte optionnel — enrichit le prompt LLM)
 // ══════════════════════════════════════════════════════════════════════════════
-router.post("/llm-analyze", upload.single("file"), async (req, res) => {
-  if (!req.file) return res.status(400).json({ error: "Aucun fichier fourni" });
+router.post(
+  "/llm-analyze",
+  upload.fields([{ name: "file", maxCount: 1 }, { name: "descriptionFile", maxCount: 1 }]),
+  async (req, res) => {
+    const file = req.files?.["file"]?.[0];
+    if (!file) return res.status(400).json({ error: "Aucun fichier fourni" });
 
-  try {
-    const data = await forwardFileToFlask(
-      "/api/data-quality/llm-analyze",
-      req.file.path,
-      req.file.originalname,
-    );
-    res.json(data);
-  } catch (e) {
-    handleError(res, e);
-  }
-});
+    const descFile = req.files?.["descriptionFile"]?.[0];
+
+    try {
+      const form = new FormData();
+      form.append("file", fs.createReadStream(file.path), file.originalname);
+      if (req.body.description) form.append("description", req.body.description);
+      if (descFile) form.append("descriptionFile", fs.createReadStream(descFile.path), descFile.originalname);
+
+      const response = await axios.post(
+        `${FLASK_URL}/api/data-quality/llm-analyze`,
+        form,
+        { headers: form.getHeaders(), maxContentLength: Infinity, maxBodyLength: Infinity },
+      );
+      fs.unlink(file.path, () => {});
+      if (descFile) fs.unlink(descFile.path, () => {});
+      res.json(response.data);
+    } catch (e) {
+      fs.unlink(file?.path, () => {});
+      if (descFile) fs.unlink(descFile?.path, () => {});
+      handleError(res, e);
+    }
+  },
+);
 
 /**
  * Ajouter dans routes/dataQuality.routes.js

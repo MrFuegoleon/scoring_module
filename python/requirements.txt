@@ -1,3 +1,5 @@
 flask
 pandas
 ydata-profiling
+pdfplumber
+python-docx

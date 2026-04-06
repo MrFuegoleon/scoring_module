@@ -27,8 +27,7 @@ export default function App() {
   // Dataset global — persiste entre les modules
   const [activeFile, setActiveFile]   = useState(null)
 
-  const activeNav       = NAV_ITEMS[activeIndex]
-  const ActiveComponent = COMPONENTS[activeNav.key]
+  const activeNav = NAV_ITEMS[activeIndex]
 
   const goTo   = (i) => setActiveIndex(i)
   const goPrev = () => setActiveIndex(i => Math.max(0, i - 1))
@@ -136,7 +135,14 @@ export default function App() {
 
         {/* Page */}
         <div className="page-wrapper">
-          <ActiveComponent activeFile={activeFile} setActiveFile={setActiveFile} />
+          {NAV_ITEMS.map((item) => {
+            const Comp = COMPONENTS[item.key]
+            return (
+              <div key={item.key} style={{ display: activeNav.key === item.key ? 'contents' : 'none' }}>
+                <Comp activeFile={activeFile} setActiveFile={setActiveFile} />
+              </div>
+            )
+          })}
         </div>
 
         {/* ══ Navigation entre modules ══ */}
