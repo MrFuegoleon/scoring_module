@@ -41,7 +41,6 @@ const STEPS = [
   { id: 'upload',  label: 'Upload Dataset',   icon: '📁' },
   { id: 'quality', label: 'Quality Analysis', icon: '📊' },
   { id: 'llm',     label: 'LLM Analysis',     icon: '🤖' },
-  { id: 'results', label: 'Results',           icon: '✅' },
 ]
 
 // activeFile et setActiveFile viennent de App.jsx — ils persistent entre modules
@@ -566,53 +565,6 @@ export default function DataQuality({ activeFile, setActiveFile }) {
                     </div>
                   )}
                 </>
-              )}
-            </div>
-          </div>
-        )
-
-      // ─────────────────────────────────────────────────────────────────────
-      case 3: // RESULTS
-        return (
-          <div className="step-content">
-            <div className="results-section">
-              <h3>Récapitulatif de l'analyse</h3>
-
-              {activeFile && (
-                <div className="active-dataset-mini">
-                  <span className="active-dot" />
-                  <span style={{ fontSize: '0.73rem', color: 'var(--muted)' }}>Dataset :</span>
-                  <span style={{ fontSize: '0.73rem', color: 'var(--text)', fontWeight: 600 }}>{activeFile.name}</span>
-                  <span style={{ fontSize: '0.68rem', color: 'var(--muted)' }}>({fmtBytes(activeFile.size)})</span>
-                </div>
-              )}
-
-              <div className="results-summary">
-                <div className={`summary-row ${qualityData && !qualityData.error ? 'done' : ''}`}>
-                  <span className="summary-icon">{qualityData && !qualityData.error ? '✓' : '○'}</span>
-                  <span className="summary-name">Rapport qualité</span>
-                  <span className="summary-status">
-                    {qualityData && !qualityData.error ? 'Complété' : qualityData?.error ? 'Erreur' : 'Non lancé'}
-                  </span>
-                </div>
-                <div className={`summary-row ${llmAnalysis && !llmAnalysis.error ? 'done' : ''}`}>
-                  <span className="summary-icon">{llmAnalysis && !llmAnalysis.error ? '✓' : '○'}</span>
-                  <span className="summary-name">Analyse LLM</span>
-                  <span className="summary-status">
-                    {llmAnalysis && !llmAnalysis.error ? 'Complété' : llmAnalysis?.error ? 'Erreur' : 'Non lancé'}
-                  </span>
-                </div>
-              </div>
-
-              {qualityData && !qualityData.error && (
-                <div className="results-container"><ScoreDisplay data={qualityData} /></div>
-              )}
-
-              {!activeFile && (
-                <div className="alert-item alert-warning">
-                  <span className="alert-icon">⚠</span>
-                  <span className="alert-msg">Aucun dataset actif — retournez à l'étape Upload.</span>
-                </div>
               )}
             </div>
           </div>

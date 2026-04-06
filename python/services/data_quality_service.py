@@ -214,13 +214,13 @@ def _score_consistency(df: pd.DataFrame) -> dict:
         if any(kw in col.lower() for kw in date_kw):
             try:
                 pd.to_datetime(df[col].dropna().head(50), errors="raise")
-                # Si la conversion réussit → la colonne EST une date stockée comme texte
                 issues.append({"column": col, "issue": "date stockée comme texte"})
             except (ValueError, TypeError):
-                # Conversion impossible → pas une date, on ignore
                 pass
 
-    score = round(max(0, (1 - len(issues) / max(len(df.columns), 1))) * 100, 2)
+    # Dénominateur = colonnes object uniquement (seules concernées par ces issues)
+    n_object_cols = len(df.select_dtypes(include="object").columns)
+    score = round(max(0, (1 - len(issues) / max(n_object_cols, 1))) * 100, 2)
     return {"score": score, "issues": issues}
 
 
@@ -240,8 +240,13 @@ def _score_validity(df: pd.DataFrame) -> dict:
                 "pct":   round(n_out / len(clean) * 100, 2)
             }
 
-    n_num  = len(df.select_dtypes(include=[np.number]).columns)
-    score  = round(max(0, (1 - len(outlier_cols) / max(n_num, 1))) * 100, 2)
+    n_num = len(df.select_dtypes(include=[np.number]).columns)
+    if outlier_cols:
+        # Pondéré par le % d'outliers dans chaque colonne, pas juste leur présence
+        avg_outlier_pct = sum(v["pct"] for v in outlier_cols.values()) / max(n_num, 1)
+        score = round(max(0, 100 - avg_outlier_pct), 2)
+    else:
+        score = 100.0
     return {"score": score, "outlier_columns": outlier_cols}
 
 

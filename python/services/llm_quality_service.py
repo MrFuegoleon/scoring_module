@@ -56,7 +56,7 @@ def build_llm_summary(df: pd.DataFrame, description: str = "", n_rows: int = 5) 
         },
     }
 
-    logger.debug(f"Building LLM summary | shape={df.shape} | description_len={len(description)}")
+    logger.info(f"Building LLM summary | shape={df.shape} | description_len={len(description)} ,description_preview={description}  ...")
 
     for col in df.columns:
         series = df[col]
@@ -181,6 +181,8 @@ def llm_quality_check(df: pd.DataFrame, description: str = "") -> dict:
     summary = build_llm_summary(df, description=description)
     user_message = _build_user_message(summary, description)
 
+    logger.info(f"=== ENVOI AU LLM ===\n[SYSTEM] {len(SYSTEM_PROMPT)} chars\n[USER] {len(user_message)} chars\n{user_message[:800]}{'...' if len(user_message) > 800 else ''}\n=== FIN ENVOI ===")
+
     client = _get_client()
     response = client.chat.completions.create(
         model=settings.AZURE_OPENAI_DEPLOYMENT,
@@ -193,6 +195,7 @@ def llm_quality_check(df: pd.DataFrame, description: str = "") -> dict:
     )
 
     raw_text = response.choices[0].message.content or ""
+    logger.info(f"=== RÉPONSE BRUTE LLM ({len(raw_text)} chars) ===\n{raw_text}\n=== FIN RÉPONSE ===")
     llm_result = _parse_response(raw_text)
 
     return {
@@ -245,9 +248,14 @@ def execute_problems(df: pd.DataFrame, problems: list) -> dict:
                 "affected_columns": prob.get("affected_columns", []),
             })
 
-        avg_pct = sum(percentages) / len(percentages) if percentages else 0
+        if percentages:
+            worst_pct    = max(percentages)
+            avg_pct      = sum(percentages) / len(percentages)
+            effective_pct = 0.6 * worst_pct + 0.4 * avg_pct  # le pire cas pèse plus
+        else:
+            effective_pct = 0
         result[pillar] = {
-            "score": round(max(0, 100 - avg_pct), 1),
+            "score": round(max(0, 100 - effective_pct), 1),
             "issues": issues,
         }
 

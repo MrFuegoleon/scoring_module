@@ -49,7 +49,8 @@ router.post("/preview", upload.single("file"), async (req, res) => {
   if (!req.file) return res.status(400).json({ error: "Aucun fichier fourni" });
 
   try {
-    const n = parseInt(req.query.n, 10) || 10;
+    const n = parseInt(req.body.n_rows, 10) || 10;
+
     const data = await forwardFileToFlask(
       `/api/data-quality/preview?n=${n}`,
       req.file.path,
@@ -87,7 +88,10 @@ router.post("/score", upload.single("file"), async (req, res) => {
 // ══════════════════════════════════════════════════════════════════════════════
 router.post(
   "/report",
-  upload.fields([{ name: "file", maxCount: 1 }, { name: "descriptionFile", maxCount: 1 }]),
+  upload.fields([
+    { name: "file", maxCount: 1 },
+    { name: "descriptionFile", maxCount: 1 },
+  ]),
   async (req, res) => {
     const file = req.files?.["file"]?.[0];
     if (!file) return res.status(400).json({ error: "Aucun fichier fourni" });
@@ -117,7 +121,10 @@ router.post(
 // ══════════════════════════════════════════════════════════════════════════════
 router.post(
   "/llm-analyze",
-  upload.fields([{ name: "file", maxCount: 1 }, { name: "descriptionFile", maxCount: 1 }]),
+  upload.fields([
+    { name: "file", maxCount: 1 },
+    { name: "descriptionFile", maxCount: 1 },
+  ]),
   async (req, res) => {
     const file = req.files?.["file"]?.[0];
     if (!file) return res.status(400).json({ error: "Aucun fichier fourni" });
@@ -127,13 +134,23 @@ router.post(
     try {
       const form = new FormData();
       form.append("file", fs.createReadStream(file.path), file.originalname);
-      if (req.body.description) form.append("description", req.body.description);
-      if (descFile) form.append("descriptionFile", fs.createReadStream(descFile.path), descFile.originalname);
+      if (req.body.description)
+        form.append("description", req.body.description);
+      if (descFile)
+        form.append(
+          "descriptionFile",
+          fs.createReadStream(descFile.path),
+          descFile.originalname,
+        );
 
       const response = await axios.post(
         `${FLASK_URL}/api/data-quality/llm-analyze`,
         form,
-        { headers: form.getHeaders(), maxContentLength: Infinity, maxBodyLength: Infinity },
+        {
+          headers: form.getHeaders(),
+          maxContentLength: Infinity,
+          maxBodyLength: Infinity,
+        },
       );
       fs.unlink(file.path, () => {});
       if (descFile) fs.unlink(descFile.path, () => {});

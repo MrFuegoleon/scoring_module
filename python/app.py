@@ -1,6 +1,18 @@
 from flask import Flask, request, jsonify
 import pandas as pd
 import os
+import logging
+
+logging.basicConfig(
+    level=logging.DEBUG,
+    format="%(asctime)s [%(levelname)s] %(name)s — %(message)s",
+    datefmt="%H:%M:%S",
+    force=True,
+)
+# Silence les librairies trop verboses
+logging.getLogger("openai").setLevel(logging.WARNING)
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("httpcore").setLevel(logging.WARNING)
 
 # ── Blueprints ──────────────────────────────────────────────────────────────
 from routes.data_quality_routes import data_quality_bp
