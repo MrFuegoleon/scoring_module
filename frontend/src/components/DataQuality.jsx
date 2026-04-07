@@ -44,7 +44,7 @@ const STEPS = [
 ]
 
 // activeFile et setActiveFile viennent de App.jsx — ils persistent entre modules
-export default function DataQuality({ activeFile, setActiveFile }) {
+export default function DataQuality({ activeFile, setActiveFile, theme = 'dark' }) {
   const [currentStep, setCurrentStep] = useState(0)
 
   // Upload local (avant confirmation)
@@ -74,7 +74,7 @@ export default function DataQuality({ activeFile, setActiveFile }) {
 
   const fileInputRef     = useRef()
   const descFileInputRef = useRef()
-  const { openProfile, closeProfile, profileState } = useProfile()
+  const { openProfile, generateNewReport, loadSavedReport, deleteReport, backToPicker, closeProfile, profileState } = useProfile()
 
   // Les lignes à afficher = slice du total reçu
   const displayedRows = allPreviewData
@@ -211,7 +211,7 @@ export default function DataQuality({ activeFile, setActiveFile }) {
   // ── Confirmation dialog ────────────────────────────────────────────────────
   const confirmAndExecute = async () => {
     setShowConfirmation(false)
-    if (pendingAction === 'profile') openProfile(activeFile)
+    if (pendingAction === 'profile') openProfile(activeFile, theme)
     else if (pendingAction === 'report') await runReport()
     setPendingAction(null)
   }
@@ -652,7 +652,14 @@ export default function DataQuality({ activeFile, setActiveFile }) {
         </div>
       )}
 
-      <ProfileModal state={profileState} onClose={closeProfile} />
+      <ProfileModal
+        state={profileState}
+        onClose={closeProfile}
+        onGenerateNew={() => generateNewReport(activeFile, theme)}
+        onLoadReport={loadSavedReport}
+        onDeleteReport={deleteReport}
+        onBackToPicker={backToPicker}
+      />
     </div>
   )
 }

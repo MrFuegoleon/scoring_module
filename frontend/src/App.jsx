@@ -139,7 +139,7 @@ export default function App() {
             const Comp = COMPONENTS[item.key]
             return (
               <div key={item.key} style={{ display: activeNav.key === item.key ? 'contents' : 'none' }}>
-                <Comp activeFile={activeFile} setActiveFile={setActiveFile} />
+                <Comp activeFile={activeFile} setActiveFile={setActiveFile} theme={theme} />
               </div>
             )
           })}

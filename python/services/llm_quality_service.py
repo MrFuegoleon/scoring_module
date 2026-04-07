@@ -268,15 +268,20 @@ def execute_problems(df: pd.DataFrame, problems: list) -> dict:
 def _execute_code_safely(code: str, df: pd.DataFrame) -> float:
     """Exécute un code Python en sandbox restreinte."""
     try:
+        import re as _re, math as _math, datetime as _datetime, statistics as _statistics
         safe_builtins = {
             "len": len, "sum": sum, "max": max, "min": min, "abs": abs,
             "round": round, "int": int, "float": float, "str": str,
             "bool": bool, "range": range, "enumerate": enumerate,
             "zip": zip, "list": list, "dict": dict, "set": set,
             "tuple": tuple, "sorted": sorted, "any": any, "all": all,
-            "isinstance": isinstance, "type": type,
+            "isinstance": isinstance, "type": type, "print": print,
         }
-        allowed_globals = {"__builtins__": safe_builtins, "df": df, "pd": pd, "np": np}
+        allowed_globals = {
+            "__builtins__": safe_builtins,
+            "df": df, "pd": pd, "np": np,
+            "re": _re, "math": _math, "datetime": _datetime, "statistics": _statistics,
+        }
         local_vars = {}
         exec(code, allowed_globals, local_vars)
 
@@ -303,28 +308,58 @@ def _generate_assessment(result: dict) -> str:
     if not scores:
         return "Aucun problème détecté."
     avg = sum(scores) / len(scores)
+    if avg > 98:
+        return "Dataset de qualité excellente. Aucune action requise."
+    if avg >= 95:
+        return "Très bonne qualité. Quelques points mineurs à surveiller."
     if avg >= 90:
-        return "Dataset de très haute qualité. Quelques points mineurs à surveiller."
-    if avg >= 75:
         return "Bonne qualité générale. Quelques problèmes à corriger."
-    if avg >= 60:
-        return "Qualité moyenne. Plusieurs problèmes nécessitent votre attention."
-    return "Qualité préoccupante. Un nettoyage important est recommandé."
+    if avg >= 80:
+        return "Qualité à améliorer. Plusieurs problèmes nécessitent votre attention."
+    return "Qualité critique. Un nettoyage important est recommandé."
 
 
-def compute_llm_score(executed_result: dict) -> float:
-    """Score agrégé pondéré sur les 4 piliers LLM."""
+CRITICAL_PILLAR_THRESHOLD = 70  # Un pilier sous ce seuil → grade forcé à Critique
+
+
+def _grade_from_score(score: float) -> str:
+    if score > 98:
+        return "Excellent"
+    if score >= 95:
+        return "Très bonne"
+    if score >= 90:
+        return "Bonne"
+    if score >= 80:
+        return "À améliorer"
+    return "Critique"
+
+
+def compute_llm_score(executed_result: dict) -> dict:
+    """Score agrégé pondéré sur les 4 piliers LLM + détection des piliers critiques."""
     weights = {"accuracy": 0.35, "validity": 0.30, "consistency": 0.25, "timeliness": 0.10}
     total, total_w = 0.0, 0.0
+
+    critical_pillars = []
 
     for key, w in weights.items():
         score = executed_result.get(key, {}).get("score")
         if score is None and key == "timeliness":
             continue
-        total += (score if score is not None else 100) * w
+        effective_score = score if score is not None else 100
+        if effective_score < CRITICAL_PILLAR_THRESHOLD:
+            critical_pillars.append(key)
+        total += effective_score * w
         total_w += w
 
-    return round(total / total_w, 2) if total_w > 0 else 100.0
+    global_score = round(total / total_w, 2) if total_w > 0 else 100.0
+
+    grade = "Critique" if critical_pillars else _grade_from_score(global_score)
+
+    return {
+        "score":            global_score,
+        "grade":            grade,
+        "critical_pillars": critical_pillars,
+    }
 
 
 # ══════════════════════════════════════════════════════════════════════════════

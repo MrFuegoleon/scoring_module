@@ -1,18 +1,20 @@
 // ── Helpers ───────────────────────────────────────────────────────────────────
 export const scoreColor = (s) => {
-  if (s >= 90) return '#00d4aa'
-  if (s >= 75) return '#f59e0b'
-  if (s >= 60) return '#ff9090'
+  if (s > 98) return '#00d4aa'
+  if (s >= 95) return '#34d399'
+  if (s >= 90) return '#f59e0b'
+  if (s >= 80) return '#fb923c'
   return '#ff6b6b'
 }
 
 const gradeClass = (g) => {
   if (!g) return ''
   const map = {
-    'Excellent':  'grade-excellent',
-    'Acceptable': 'grade-acceptable',
-    'Dégradé':    'grade-degraded',
-    'Critique':   'grade-critique',
+    'Excellent':   'grade-excellent',
+    'Très bonne':  'grade-tres-bonne',
+    'Bonne':       'grade-bonne',
+    'À améliorer': 'grade-ameliorer',
+    'Critique':    'grade-critique',
   }
   return map[g] || ''
 }

@@ -122,7 +122,8 @@ def profile_report():
         if df.empty:
             return jsonify({"error": "Dataset vide"}), 400
 
-        html = generate_profile_html(df, title=f"Profiling — {title}")
+        theme = request.form.get("theme", "dark")
+        html = generate_profile_html(df, title=f"Profiling — {title}", theme=theme)
         return Response(html, mimetype="text/html", status=200)
 
     except Exception as e:
@@ -186,19 +187,20 @@ def llm_analyze():
 
         llm_result = llm_quality_check(df, description=description)
         execution_result = execute_problems(df, llm_result.get("problems", []))
+        llm_score_result = compute_llm_score(execution_result)
         merged_analysis = {
-            # Conserver compatibilité front existant
             "overall_assessment": execution_result.get("overall_assessment") or llm_result.get("overall_assessment"),
-            "score": compute_llm_score(execution_result),
-            "accuracy": execution_result.get("accuracy"),
+            "score":            llm_score_result["score"],
+            "grade":            llm_score_result["grade"],
+            "critical_pillars": llm_score_result["critical_pillars"],
+            "accuracy":    execution_result.get("accuracy"),
             "consistency": execution_result.get("consistency"),
-            "coherence": execution_result.get("consistency") or execution_result.get("coherence"),
-            "timeliness": execution_result.get("timeliness"),
-            "validity": execution_result.get("validity"),
+            "coherence":   execution_result.get("consistency") or execution_result.get("coherence"),
+            "timeliness":  execution_result.get("timeliness"),
+            "validity":    execution_result.get("validity"),
             "recommendations": llm_result.get("recommendations", []),
-            # Exposer trace pour debug
             "debug": {
-                "initial": llm_result,
+                "initial":  llm_result,
                 "executed": execution_result,
             },
         }

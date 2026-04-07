@@ -5,14 +5,22 @@
  * Proxy entre React et Flask /api/data-quality/*
  */
 
-import express from "express";
-import multer from "multer";
-import axios from "axios";
+import express  from "express";
+import multer   from "multer";
+import axios    from "axios";
 import FormData from "form-data";
-import fs from "fs";
+import fs       from "fs";
 
-const router = express.Router();
-const upload = multer({ dest: "uploads/" });
+import {
+  computeFileHash,
+  saveReport,
+  getReportsByHash,
+  getReportHtml,
+  deleteReport,
+} from "../services/reportStore.js";
+
+const router   = express.Router();
+const upload   = multer({ dest: "uploads/" });
 const FLASK_URL = "http://localhost:5000";
 
 // ── Helper : forwarder un fichier local vers Flask ──────────────────────────
@@ -24,33 +32,29 @@ async function forwardFileToFlask(flaskEndpoint, filePath, originalName) {
     const response = await axios.post(`${FLASK_URL}${flaskEndpoint}`, form, {
       headers: form.getHeaders(),
       maxContentLength: Infinity,
-      maxBodyLength: Infinity,
+      maxBodyLength:    Infinity,
     });
     return response.data;
   } finally {
-    // Nettoyage garanti même en cas d'erreur
     fs.unlink(filePath, () => {});
   }
 }
 
 // ── Helper : réponse d'erreur uniforme ─────────────────────────────────────
 function handleError(res, error) {
-  const status = error.response?.status || 500;
-  const message =
-    error.response?.data?.error || error.message || "Erreur interne";
+  const status  = error.response?.status || 500;
+  const message = error.response?.data?.error || error.message || "Erreur interne";
   return res.status(status).json({ success: false, error: message });
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
 // POST /api/data-quality/preview
-// Aperçu rapide : shape, colonnes, sample
 // ══════════════════════════════════════════════════════════════════════════════
 router.post("/preview", upload.single("file"), async (req, res) => {
   if (!req.file) return res.status(400).json({ error: "Aucun fichier fourni" });
 
   try {
-    const n = parseInt(req.body.n_rows, 10) || 10;
-
+    const n    = parseInt(req.body.n_rows, 10) || 10;
     const data = await forwardFileToFlask(
       `/api/data-quality/preview?n=${n}`,
       req.file.path,
@@ -64,7 +68,6 @@ router.post("/preview", upload.single("file"), async (req, res) => {
 
 // ══════════════════════════════════════════════════════════════════════════════
 // POST /api/data-quality/score
-// Score qualité uniquement (léger, sans analyse complète)
 // ══════════════════════════════════════════════════════════════════════════════
 router.post("/score", upload.single("file"), async (req, res) => {
   if (!req.file) return res.status(400).json({ error: "Aucun fichier fourni" });
@@ -83,20 +86,17 @@ router.post("/score", upload.single("file"), async (req, res) => {
 
 // ══════════════════════════════════════════════════════════════════════════════
 // POST /api/data-quality/report
-// Rapport qualité complet (overview + colonnes + score + alertes)
-// Accepte : file (requis), descriptionFile (optionnel), description (texte optionnel)
 // ══════════════════════════════════════════════════════════════════════════════
 router.post(
   "/report",
   upload.fields([
-    { name: "file", maxCount: 1 },
+    { name: "file",            maxCount: 1 },
     { name: "descriptionFile", maxCount: 1 },
   ]),
   async (req, res) => {
-    const file = req.files?.["file"]?.[0];
+    const file    = req.files?.["file"]?.[0];
     if (!file) return res.status(400).json({ error: "Aucun fichier fourni" });
 
-    // Nettoyage du fichier description (non utilisé par Flask /report)
     const descFile = req.files?.["descriptionFile"]?.[0];
 
     try {
@@ -116,17 +116,15 @@ router.post(
 
 // ══════════════════════════════════════════════════════════════════════════════
 // POST /api/data-quality/llm-analyze
-// LLM analysis (proxy vers Flask)
-// Accepte : file (requis), description (texte optionnel — enrichit le prompt LLM)
 // ══════════════════════════════════════════════════════════════════════════════
 router.post(
   "/llm-analyze",
   upload.fields([
-    { name: "file", maxCount: 1 },
+    { name: "file",            maxCount: 1 },
     { name: "descriptionFile", maxCount: 1 },
   ]),
   async (req, res) => {
-    const file = req.files?.["file"]?.[0];
+    const file    = req.files?.["file"]?.[0];
     if (!file) return res.status(400).json({ error: "Aucun fichier fourni" });
 
     const descFile = req.files?.["descriptionFile"]?.[0];
@@ -134,23 +132,14 @@ router.post(
     try {
       const form = new FormData();
       form.append("file", fs.createReadStream(file.path), file.originalname);
-      if (req.body.description)
-        form.append("description", req.body.description);
+      if (req.body.description) form.append("description", req.body.description);
       if (descFile)
-        form.append(
-          "descriptionFile",
-          fs.createReadStream(descFile.path),
-          descFile.originalname,
-        );
+        form.append("descriptionFile", fs.createReadStream(descFile.path), descFile.originalname);
 
       const response = await axios.post(
         `${FLASK_URL}/api/data-quality/llm-analyze`,
         form,
-        {
-          headers: form.getHeaders(),
-          maxContentLength: Infinity,
-          maxBodyLength: Infinity,
-        },
+        { headers: form.getHeaders(), maxContentLength: Infinity, maxBodyLength: Infinity },
       );
       fs.unlink(file.path, () => {});
       if (descFile) fs.unlink(descFile.path, () => {});
@@ -163,56 +152,109 @@ router.post(
   },
 );
 
-/**
- * Ajouter dans routes/dataQuality.routes.js
- * ──────────────────────────────────────────
- * Proxy vers Flask /api/data-quality/profile
- * Retourne le HTML brut à React (pas du JSON).
- */
-
-// ── POST /api/data-quality/profile ───────────────────────────────────────────
+// ══════════════════════════════════════════════════════════════════════════════
+// POST /api/data-quality/profile
+// Génère (ou sert depuis cache) le rapport ydata_profiling HTML.
+// Retourne le HTML brut + headers X-Report-Id, X-File-Hash, X-Generated-At.
+// ══════════════════════════════════════════════════════════════════════════════
 router.post("/profile", upload.single("file"), async (req, res) => {
   if (!req.file) return res.status(400).json({ error: "Aucun fichier fourni" });
 
+  const filePath    = req.file.path;
+  const originalName = req.file.originalname;
+
   try {
+    // 1. Hash du fichier uploadé
+    const fileHash = computeFileHash(filePath);
+
+    // 2. Cache hit ? — ignoré si force=true (l'utilisateur veut une nouvelle génération)
+    const force  = req.query.force === 'true' || req.body.force === 'true';
+    const cached = getReportsByHash(fileHash);
+    if (!force && cached.length > 0) {
+      const html = getReportHtml(cached[0].id);
+      if (html) {
+        fs.unlink(filePath, () => {});
+        res.setHeader("Content-Type",   "text/html");
+        res.setHeader("X-Report-Id",    cached[0].id);
+        res.setHeader("X-File-Hash",    fileHash);
+        res.setHeader("X-Generated-At", cached[0].generated_at);
+        res.setHeader("X-From-Cache",   "true");
+        return res.send(html);
+      }
+    }
+
+    // 3. Pas de cache — générer via Flask
     const form = new FormData();
-    form.append(
-      "file",
-      fs.createReadStream(req.file.path),
-      req.file.originalname,
-    );
+    form.append("file", fs.createReadStream(filePath), originalName);
+    const theme = req.body.theme || "dark";
+    form.append("theme", theme);
 
     const response = await axios.post(
       `${FLASK_URL}/api/data-quality/profile`,
       form,
       {
         headers: form.getHeaders(),
-        // Important : récupérer la réponse comme texte brut (pas JSON)
         responseType: "text",
         maxContentLength: Infinity,
-        maxBodyLength: Infinity,
-        // Le rapport peut être lourd, augmenter le timeout
-        timeout: 300_000, // 5min — minimal mode est rapide mais on garde de la marge
+        maxBodyLength:    Infinity,
+        timeout: 300_000,
       },
     );
 
-    // Nettoyage fichier temp
-    fs.unlink(req.file.path, () => {});
+    fs.unlink(filePath, () => {});
 
-    // Renvoyer le HTML brut à React
-    res.setHeader("Content-Type", "text/html");
-    res.send(response.data);
+    const html = response.data;
+
+    // 4. Sauvegarder sur disque
+    const { id, generated_at } = saveReport(fileHash, originalName, html);
+
+    // 5. Renvoyer le HTML avec métadonnées
+    res.setHeader("Content-Type",   "text/html");
+    res.setHeader("X-Report-Id",    id);
+    res.setHeader("X-File-Hash",    fileHash);
+    res.setHeader("X-Generated-At", generated_at);
+    res.setHeader("X-From-Cache",   "false");
+    res.send(html);
+
   } catch (e) {
-    fs.unlink(req.file?.path, () => {});
-    // responseType:"text" → e.response.data est une string, pas un objet
+    fs.unlink(filePath, () => {});
     let msg = e.message;
     if (e.response?.data) {
-      try {
-        msg = JSON.parse(e.response.data)?.error || msg;
-      } catch {}
+      try { msg = JSON.parse(e.response.data)?.error || msg; } catch {}
     }
     res.status(500).json({ error: msg });
   }
+});
+
+// ══════════════════════════════════════════════════════════════════════════════
+// GET /api/data-quality/reports?file_hash=<hash>
+// Liste les rapports sauvegardés pour un dataset donné (par hash).
+// ══════════════════════════════════════════════════════════════════════════════
+router.get("/reports", (req, res) => {
+  const { file_hash } = req.query;
+  if (!file_hash) return res.status(400).json({ error: "file_hash requis" });
+  res.json(getReportsByHash(file_hash));
+});
+
+// ══════════════════════════════════════════════════════════════════════════════
+// GET /api/data-quality/reports/:id/html
+// Retourne le HTML brut d'un rapport sauvegardé.
+// ══════════════════════════════════════════════════════════════════════════════
+router.get("/reports/:id/html", (req, res) => {
+  const html = getReportHtml(req.params.id);
+  if (!html) return res.status(404).json({ error: "Rapport introuvable" });
+  res.setHeader("Content-Type", "text/html");
+  res.send(html);
+});
+
+// ══════════════════════════════════════════════════════════════════════════════
+// DELETE /api/data-quality/reports/:id
+// Supprime un rapport sauvegardé.
+// ══════════════════════════════════════════════════════════════════════════════
+router.delete("/reports/:id", (req, res) => {
+  const ok = deleteReport(req.params.id);
+  if (!ok) return res.status(404).json({ error: "Rapport introuvable" });
+  res.json({ success: true });
 });
 
 export default router;

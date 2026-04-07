@@ -13,6 +13,8 @@ venv/
 
 # Uploads temporaires
 backend/uploads/
+backend/reports/
+
 
 # Rapports générés (trop lourds pour git)
 dashboard_influenceurs.html

@@ -1,0 +1,125 @@
+# ydata_profiling config - DataPipeline theme
+# Primary: #6c63ff  Teal: #00d4aa  Red: #ff6b6b  Warn: #f59e0b
+# Bg: #0a0a0f  Bg2: #111118  Bg3: #1a1a24  Border: #2a2a3a
+
+html:
+  style:
+    primary_color: "#6c63ff"
+    logo: ""
+    theme: "flatly"
+  navbar_show: true
+  minify_html: true
+  use_local_assets: true
+  inline: true
+
+dataset:
+  description: ""
+  creator: "DataPipeline v0.1"
+  author: ""
+  copyright_holder: ""
+  copyright_year: "2026"
+  url: ""
+
+plot:
+  image_format: "svg"
+
+  histogram:
+    bins: 50
+    max_bins: 250
+    x_axis_labels: true
+
+  pie:
+    max_unique: 10
+
+  scatter_threshold: 1000
+
+  correlation:
+    cmap: "RdBu"
+    bad: "#1a1a24"
+
+  cat_freq:
+    show: true
+    type: "bar"
+    max_unique: 10
+
+n_freq_table_max: 10
+n_obs_unique: 5
+n_extreme_obs: 5
+
+samples:
+  head: 10
+  tail: 5
+  random: 0
+
+duplicates:
+  head: 10
+  tail: 5
+
+missing_diagrams:
+  bar: true
+  matrix: true
+  heatmap: false
+  dendrogram: false
+
+correlations:
+  pearson:
+    calculate: true
+    warn_high_correlations: 10
+    threshold: 0.9
+  spearman:
+    calculate: false
+  kendall:
+    calculate: false
+  phi_k:
+    calculate: false
+  cramers:
+    calculate: false
+
+interactions:
+  continuous: false
+
+vars:
+  num:
+    quantiles:
+      - 0.05
+      - 0.25
+      - 0.5
+      - 0.75
+      - 0.95
+    skewness_threshold: 20
+    low_categorical_threshold: 5
+    chi_squared_threshold: 0.999
+
+  bool:
+    mappings:
+      t: true
+      f: false
+      "yes": true
+      "no": false
+      "true": true
+      "false": false
+      y: true
+      n: false
+
+  cat:
+    length: true
+    characters: true
+    words: true
+    n_obs: 5
+    chi_squared_threshold: 0.999
+    coerce_str_to_date: false
+    datetime_formats:
+      - "%Y-%m-%d"
+      - "%d/%m/%Y"
+      - "%Y/%m/%d"
+      - "%d-%m-%Y"
+    stop_words: []
+
+  file:
+    active: false
+  image:
+    active: false
+  path:
+    active: false
+  url:
+    active: false

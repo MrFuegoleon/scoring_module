@@ -16,7 +16,9 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
 const PORT = 3001;
 
-app.use(cors());
+app.use(cors({
+  exposedHeaders: ['X-Report-Id', 'X-File-Hash', 'X-Generated-At', 'X-From-Cache'],
+}));
 app.use(express.json());
 
 // ── Multer (stockage temporaire uploads) ────────────────────────────────────
