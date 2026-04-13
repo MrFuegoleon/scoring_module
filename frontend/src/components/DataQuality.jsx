@@ -44,7 +44,7 @@ const STEPS = [
 ]
 
 // activeFile et setActiveFile viennent de App.jsx — ils persistent entre modules
-export default function DataQuality({ activeFile, setActiveFile, theme = 'dark' }) {
+export default function DataQuality({ activeFile, setActiveFile, theme = 'light' }) {
   const [currentStep, setCurrentStep] = useState(0)
 
   // Upload local (avant confirmation)

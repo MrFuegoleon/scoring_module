@@ -313,7 +313,7 @@ export function ProfileModal({ state, onClose, onGenerateNew, onLoadReport, onDe
             className="profile-iframe"
             src={state.blobUrl}
             title="Rapport ydata_profiling"
-            sandbox="allow-scripts allow-same-origin"
+            sandbox="allow-scripts allow-forms"
           />
         )}
       </div>

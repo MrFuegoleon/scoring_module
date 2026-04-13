@@ -22,7 +22,7 @@ const COMPONENTS = {
 export default function App() {
   const [activeIndex, setActiveIndex] = useState(0)
   const [collapsed, setCollapsed]     = useState(false)
-  const [theme, setTheme]             = useState('dark')
+  const [theme, setTheme]             = useState('light')
 
   // Dataset global — persiste entre les modules
   const [activeFile, setActiveFile]   = useState(null)

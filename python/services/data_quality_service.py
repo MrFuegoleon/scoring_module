@@ -246,7 +246,7 @@ def _inject_dp_theme(html: str, theme: str = "dark") -> str:
     return html.replace("<body", css + "\n<body", 1)
 
 
-def generate_profile_html(df, title: str = "Rapport Qualite", theme: str = "dark") -> str:
+def generate_profile_html(df, title: str = "Rapport Qualite", theme: str = "light") -> str:
     """
     Genere le rapport ydata_profiling et retourne le HTML brut.
     theme : 'dark' ou 'light' — adapte la palette au theme React actif.
@@ -267,7 +267,7 @@ def generate_profile_html(df, title: str = "Rapport Qualite", theme: str = "dark
             title=title,
             minimal=False,
             explorative=False,
-            progress_bar=False,
+            progress_bar=True,
             config=settings,
         )
         return _inject_dp_theme(profile.to_html(), theme=theme)
