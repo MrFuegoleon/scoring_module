@@ -10,7 +10,6 @@ logging.basicConfig(
     force=True,
 )
 # Silence les librairies trop verboses
-logging.getLogger("openai").setLevel(logging.WARNING)
 logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("httpcore").setLevel(logging.WARNING)
 

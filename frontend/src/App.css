@@ -677,7 +677,6 @@ body {
 
 /* ── Sections analyse ── */
 .analysis-section,
-.llm-section,
 .results-section {
   display: flex;
   flex-direction: column;
@@ -685,7 +684,6 @@ body {
 }
 
 .analysis-section h3,
-.llm-section h3,
 .results-section h3 {
   font-family: var(--font-sans);
   font-size: 0.95rem;
@@ -711,56 +709,8 @@ body {
 }
 .action-btn:hover:not(:disabled) { background: #7c74ff; transform: translateY(-1px); box-shadow: 0 6px 18px rgba(108,99,255,0.3); }
 .action-btn:disabled { opacity: 0.4; cursor: not-allowed; transform: none; }
-.action-btn.llm-btn { background: linear-gradient(135deg, #6c63ff 0%, #00d4aa 100%); }
-.action-btn.llm-btn:hover:not(:disabled) { opacity: 0.9; transform: translateY(-1px); }
 
 .results-container { margin-top: 0.25rem; }
-
-.desc-toggle-btn {
-  background: var(--bg3); border: 1px solid var(--border); color: var(--muted);
-  padding: 0.4rem 0.8rem; border-radius: 6px; font-family: var(--font-mono);
-  font-size: 0.7rem; cursor: pointer; transition: all 0.15s; align-self: flex-start;
-}
-.desc-toggle-btn:hover { border-color: var(--accent); color: var(--accent); }
-
-.desc-textarea {
-  background: var(--bg3); border: 1px solid var(--border); border-radius: 8px;
-  padding: 0.75rem; color: var(--text); font-family: var(--font-mono);
-  font-size: 0.74rem; resize: vertical; width: 100%;
-}
-.desc-textarea:focus { outline: none; border-color: var(--accent); }
-
-.description-section { display: flex; flex-direction: column; gap: 0.5rem; }
-.llm-results { display: flex; flex-direction: column; gap: 0.85rem; margin-top: 0.25rem; }
-
-.llm-assessment {
-  background: rgba(108,99,255,0.05);
-  border: 1px solid rgba(108,99,255,0.2);
-  border-radius: 8px;
-  padding: 0.85rem 1rem;
-}
-.llm-assessment h4 { font-size: 0.72rem; font-weight: 600; color: var(--accent); margin-bottom: 0.4rem; text-transform: uppercase; letter-spacing: 0.08em; }
-.llm-assessment p  { font-size: 0.76rem; color: var(--text); line-height: 1.6; }
-
-.pillar-result {
-  background: var(--bg3); border: 1px solid var(--border); border-radius: 8px; padding: 0.85rem 1rem;
-}
-.pillar-result h5 { font-size: 0.76rem; font-weight: 600; }
-
-.issue {
-  display: flex; align-items: center; gap: 0.5rem;
-  padding: 0.35rem 0; font-size: 0.72rem;
-  border-bottom: 1px solid var(--border);
-}
-.issue:last-child { border-bottom: none; }
-
-.severity {
-  font-size: 0.55rem; padding: 1px 6px; border-radius: 10px;
-  text-transform: uppercase; font-weight: 600; flex-shrink: 0;
-}
-.severity.high   { background: rgba(255,107,107,0.15); color: #ff9090; }
-.severity.medium { background: rgba(245,158,11,0.15); color: var(--warn); }
-.severity.low    { background: rgba(108,99,255,0.15); color: var(--accent); }
 
 /* ════════════════════════════════════════════════
    DATA QUALITY — Nav steps (within DQ page)
@@ -987,37 +937,6 @@ body {
   letter-spacing: 0.02em;
 }
 .btn-set-active:hover { background: #00e6bb; transform: translateY(-1px); box-shadow: 0 6px 18px rgba(0,212,170,0.3); }
-
-/* ── Description panel ── */
-.desc-panel {
-  background: rgba(0,212,170,0.04);
-  border: 1px solid rgba(0,212,170,0.15);
-  border-radius: 10px;
-  padding: 0.85rem 1rem;
-  display: flex;
-  flex-direction: column;
-  gap: 0.6rem;
-}
-
-.desc-panel-title {
-  display: flex;
-  align-items: center;
-  gap: 0.4rem;
-  font-size: 0.73rem;
-  color: var(--muted);
-}
-
-.desc-panel-btns {
-  display: flex;
-  gap: 0.5rem;
-  flex-wrap: wrap;
-}
-
-.desc-file-tag {
-  font-size: 0.7rem;
-  color: var(--accent2);
-  padding: 0.3rem 0;
-}
 
 /* ════════════════════════════════════════════════
    APERÇU RAPIDE — Preview table

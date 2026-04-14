@@ -40,7 +40,6 @@ const parsePreview = (data) => {
 const STEPS = [
   { id: 'upload',  label: 'Upload Dataset',   icon: '📁' },
   { id: 'quality', label: 'Quality Analysis', icon: '📊' },
-  { id: 'llm',     label: 'LLM Analysis',     icon: '🤖' },
 ]
 
 // activeFile et setActiveFile viennent de App.jsx — ils persistent entre modules
@@ -61,19 +60,12 @@ export default function DataQuality({ activeFile, setActiveFile, theme = 'light'
   const [loading, setLoading]           = useState(false)
   const [loadingMsg, setLoadingMsg]     = useState('')
   const [qualityData, setQualityData]   = useState(null)
-  const [llmAnalysis, setLlmAnalysis]   = useState(null)
-
-  // Description
-  const [showTextDesc, setShowTextDesc]       = useState(false)
-  const [textDescription, setTextDescription] = useState('')
-  const [descriptionFile, setDescriptionFile] = useState(null)
 
   // Confirmation
   const [showConfirmation, setShowConfirmation] = useState(false)
   const [pendingAction, setPendingAction]       = useState(null)
 
   const fileInputRef     = useRef()
-  const descFileInputRef = useRef()
   const { openProfile, generateNewReport, loadSavedReport, deleteReport, backToPicker, closeProfile, profileState } = useProfile()
 
   // Les lignes à afficher = slice du total reçu
@@ -105,7 +97,6 @@ export default function DataQuality({ activeFile, setActiveFile, theme = 'light'
     setActiveFile(pendingFile)
     setPendingFile(null)
     setQualityData(null)
-    setLlmAnalysis(null)
     setAllPreviewData(null)
   }
 
@@ -115,7 +106,6 @@ export default function DataQuality({ activeFile, setActiveFile, theme = 'light'
     setAllPreviewData(null)
     setPreviewError(null)
     setQualityData(null)
-    setLlmAnalysis(null)
     if (fileInputRef.current) fileInputRef.current.value = ''
   }
 
@@ -156,14 +146,12 @@ export default function DataQuality({ activeFile, setActiveFile, theme = 'light'
     setPreviewLoading(false)
   }
 
-  // ── Rapport qualité (indépendant du LLM) ───────────────────────────────────
+  // ── Rapport qualité ──────────────────────────────────────────────────────
   const runReport = async () => {
     if (!activeFile) return
     setLoading(true); setLoadingMsg('Analyse qualité en cours...')
     const fd = new FormData()
     fd.append('file', activeFile)
-    if (textDescription.trim()) fd.append('description', textDescription)
-    if (descriptionFile) fd.append('descriptionFile', descriptionFile)
     try {
       const res = await fetch('/api/data-quality/report', { method: 'POST', body: fd })
       if (!res.ok) {
@@ -174,36 +162,6 @@ export default function DataQuality({ activeFile, setActiveFile, theme = 'light'
         setQualityData(data.success ? data : { error: data.error || 'Erreur inconnue' })
       }
     } catch (e) { setQualityData({ error: e.message }) }
-    setLoading(false)
-    setLoadingMsg('')
-  }
-
-  // ── Analyse LLM (indépendante) ─────────────────────────────────────────────
-  const runLlm = async () => {
-    if (!activeFile) return
-    setLoading(true); setLoadingMsg('Analyse LLM en cours...')
-    const fd = new FormData()
-    fd.append('file', activeFile)
-    if (textDescription.trim()) fd.append('description', textDescription)
-    if (descriptionFile) fd.append('descriptionFile', descriptionFile)
-    try {
-      const res = await fetch('/api/data-quality/llm-analyze', { method: 'POST', body: fd })
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}))
-        setLlmAnalysis({ error: err.error || `Erreur HTTP ${res.status}` })
-      } else {
-        const data = await res.json()
-        if (data.success) {
-          const raw = data.analysis || {}
-          setLlmAnalysis({
-            ...raw, ...raw.executed, ...raw.initial,
-            overall_assessment: raw.overall_assessment || raw.initial?.overall_assessment || raw.executed?.overall_assessment,
-            recommendations: raw.recommendations || raw.initial?.recommendations || [],
-            coherence: raw.coherence || raw.consistency || raw.executed?.consistency || raw.initial?.consistency,
-          })
-        } else setLlmAnalysis({ error: data.error || 'Erreur inconnue' })
-      }
-    } catch (e) { setLlmAnalysis({ error: e.message }) }
     setLoading(false)
     setLoadingMsg('')
   }
@@ -299,44 +257,6 @@ export default function DataQuality({ activeFile, setActiveFile, theme = 'light'
                 )}
               </div>
             )}
-
-            {/* ── Description ── */}
-            <div className="desc-panel">
-              <div className="desc-panel-title">
-                <span>ℹ</span>
-                <span>Règles métiers pour le scoring (optionnel)</span>
-              </div>
-              <div className="desc-panel-btns">
-                <button className="btn-secondary" onClick={() => { setShowTextDesc(false); setDescriptionFile(null); descFileInputRef.current?.click() }}>
-                  📎 Fichier
-                </button>
-                <button className="btn-secondary" onClick={() => { setShowTextDesc(p => !p); setDescriptionFile(null) }}>
-                  ✏️ Texte
-                </button>
-                {(showTextDesc || descriptionFile || textDescription) && (
-                  <button
-                    className="btn-secondary"
-                    style={{ color: 'var(--accent3)', borderColor: 'rgba(255,107,107,0.3)' }}
-                    onClick={() => { setShowTextDesc(false); setTextDescription(''); setDescriptionFile(null); if (descFileInputRef.current) descFileInputRef.current.value = '' }}
-                  >
-                    ✕
-                  </button>
-                )}
-              </div>
-              <input ref={descFileInputRef} type="file" accept=".txt,.md,.pdf,.doc,.docx"
-                onChange={(e) => { const f = e.target.files[0]; if (f) setDescriptionFile(f) }}
-                style={{ display: 'none' }} />
-              {descriptionFile && <div className="desc-file-tag">📄 {descriptionFile.name}</div>}
-              {showTextDesc && (
-                <textarea
-                  className="desc-textarea"
-                  placeholder="Description du dataset et règles métiers..."
-                  value={textDescription}
-                  onChange={(e) => setTextDescription(e.target.value)}
-                  rows={3}
-                />
-              )}
-            </div>
 
             {/* ── Aperçu rapide (uniquement ici) ── */}
             {(activeFile || pendingFile) && (
@@ -472,104 +392,6 @@ export default function DataQuality({ activeFile, setActiveFile, theme = 'light'
           </div>
         )
 
-      // ─────────────────────────────────────────────────────────────────────
-      case 2: // LLM ANALYSIS
-        return (
-          <div className="step-content">
-            <div className="llm-section">
-              <h3>Analyse LLM — Problèmes potentiels</h3>
-              <p style={{ fontSize: '0.76rem', color: 'var(--muted)' }}>
-                Détection intelligente d'anomalies, incohérences et recommandations.
-              </p>
-
-              {!activeFile ? (
-                <div className="alert-item alert-warning">
-                  <span className="alert-icon">⚠</span>
-                  <span className="alert-msg">Aucun dataset actif — allez à l'étape Upload.</span>
-                </div>
-              ) : (
-                <>
-                  <div className="active-dataset-mini">
-                    <span className="active-dot" />
-                    <span style={{ fontSize: '0.73rem', color: 'var(--muted)' }}>Dataset :</span>
-                    <span style={{ fontSize: '0.73rem', color: 'var(--text)', fontWeight: 600 }}>{activeFile.name}</span>
-                  </div>
-
-                  <button className="action-btn llm-btn" onClick={runLlm} disabled={loading}>
-                    {loading && loadingMsg.includes('LLM') ? '🔄 Analyse LLM...' : '🤖 Lancer analyse LLM'}
-                  </button>
-
-                  {loading && loadingMsg && (
-                    <div className="loader"><div className="spinner" />{loadingMsg}</div>
-                  )}
-
-                  {llmAnalysis && !llmAnalysis.error && (
-                    <div className="llm-results">
-                      {llmAnalysis.overall_assessment && (
-                        <div className="llm-assessment">
-                          <h4>Évaluation globale</h4>
-                          <p>{llmAnalysis.overall_assessment}</p>
-                        </div>
-                      )}
-
-                      {['accuracy', 'coherence', 'validity'].map(pillar => {
-                        const d = llmAnalysis[pillar]
-                        if (!d?.issues?.length) return null
-                        const names = { accuracy: '🎯 Précision', coherence: '⚙ Cohérence', validity: '✅ Validité' }
-                        const avg = d.issues.reduce((s, i) => s + (i.percentage || 0), 0) / d.issues.length
-                        const score = Math.max(0, 100 - avg)
-                        const color = score >= 80 ? '#00d4aa' : score >= 60 ? '#f59e0b' : '#ff6b6b'
-                        return (
-                          <div key={pillar} className="pillar-result">
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '0.6rem' }}>
-                              <h5>{names[pillar]}</h5>
-                              <span style={{ background: color + '20', color, padding: '1px 8px', borderRadius: '10px', fontSize: '0.63rem', fontWeight: 600 }}>
-                                {score.toFixed(1)}%
-                              </span>
-                            </div>
-                            {d.issues.map((issue, idx) => (
-                              <div key={idx} className="issue">
-                                <span className={`severity ${issue.severity}`}>{issue.severity}</span>
-                                <span>{issue.description || issue.title}</span>
-                              </div>
-                            ))}
-                          </div>
-                        )
-                      })}
-
-                      {llmAnalysis.recommendations?.length > 0 && (
-                        <div className="pillar-result">
-                          <h5 style={{ marginBottom: '0.6rem' }}>💡 Recommandations</h5>
-                          {llmAnalysis.recommendations.map((rec, idx) => (
-                            <div key={idx} className="issue">
-                              <span className={`severity ${rec.priority}`}>{rec.priority}</span>
-                              <span>{rec.action}</span>
-                            </div>
-                          ))}
-                        </div>
-                      )}
-
-                      {!llmAnalysis.recommendations?.length && !['accuracy','coherence','validity'].some(p => llmAnalysis[p]?.issues?.length) && (
-                        <div className="alert-item alert-success">
-                          <span className="alert-icon">✓</span>
-                          <span>Aucune anomalie significative détectée.</span>
-                        </div>
-                      )}
-                    </div>
-                  )}
-
-                  {llmAnalysis?.error && (
-                    <div className="alert-item alert-warning" style={{ marginTop: '0.75rem' }}>
-                      <span className="alert-icon">⚠</span>
-                      <span className="alert-msg">LLM : {llmAnalysis.error}</span>
-                    </div>
-                  )}
-                </>
-              )}
-            </div>
-          </div>
-        )
-
       default: return null
     }
   }
@@ -632,12 +454,6 @@ export default function DataQuality({ activeFile, setActiveFile, theme = 'light'
               <div className="confirm-row">
                 <span>Dataset</span>
                 <span>{activeFile?.name} ({fmtBytes(activeFile?.size || 0)})</span>
-              </div>
-              <div className="confirm-row">
-                <span>Description</span>
-                <span style={{ color: textDescription.trim() || descriptionFile ? 'var(--text)' : 'var(--muted)' }}>
-                  {textDescription.trim() ? `Texte (${textDescription.length} car.)` : descriptionFile ? descriptionFile.name : 'Aucune'}
-                </span>
               </div>
             </div>
             <div style={{ display: 'flex', gap: '0.75rem' }}>

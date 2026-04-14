@@ -5,9 +5,6 @@ Compartiment 1 — Data Quality
 Endpoints exposés à Express.
 """
 
-import io
-import pdfplumber
-import docx
 
 from flask import Blueprint, request, jsonify, Response
 from services.data_quality_service import (
@@ -17,36 +14,8 @@ from services.data_quality_service import (
     compute_quality_score,
     generate_profile_html,
 )
-from services.llm_quality_service import (
-    llm_quality_check,
-    execute_problems,
-    compute_llm_score,
-)
 
 data_quality_bp = Blueprint("data_quality", __name__)
-
-
-def _extract_text_from_file(file_storage) -> str:
-    """Extrait le texte d'un FileStorage selon son extension."""
-    name = (file_storage.filename or "").lower()
-    raw = file_storage.read()
-
-    if name.endswith(".pdf"):
-        with pdfplumber.open(io.BytesIO(raw)) as pdf:
-            return "\n".join(
-                page.extract_text() or "" for page in pdf.pages
-            ).strip()
-
-    if name.endswith(".docx"):
-        doc = docx.Document(io.BytesIO(raw))
-        return "\n".join(p.text for p in doc.paragraphs).strip()
-
-    if name.endswith(".doc"):
-        # .doc (ancien format binaire) — lecture texte brut dégradée
-        return raw.decode("utf-8", errors="ignore").strip()
-
-    # .txt, .md et tout autre format texte
-    return raw.decode("utf-8", errors="ignore").strip()
 
 
 # ── POST /api/data-quality/report ────────────────────────────────────────────
@@ -148,67 +117,6 @@ def quality_score_only():
         score = compute_quality_score(df)
         return jsonify({"success": True, **score}), 200
 
-    except ValueError as e:
-        return jsonify({"error": str(e)}), 400
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-
-# ── POST /api/data-quality/llm-analyze ───────────────────────────────────────
-@data_quality_bp.route("/llm-analyze", methods=["POST"])
-def llm_analyze():
-    """Analyse LLM 2 étapes : détection + exécution des problèmes générés."""
-    try:
-        if "file" in request.files:
-            df = load_dataframe(request.files["file"])
-        elif request.is_json:
-            body = request.get_json()
-            filepath = body.get("filepath", "")
-            df = load_dataframe_from_path(filepath)
-        else:
-            return jsonify({"error": "Fournir un fichier (multipart) ou un JSON avec 'filepath'"}), 400
-
-        if df.empty:
-            return jsonify({"error": "Le dataset est vide"}), 400
-
-        description = ""
-        if request.is_json:
-            description = body.get("description", "")
-        elif "description" in request.form:
-            description = request.form.get("description", "")
-
-        if "descriptionFile" in request.files:
-            try:
-                file_text = _extract_text_from_file(request.files["descriptionFile"])
-                if file_text:
-                    description = (description + "\n\n" + file_text).strip() if description else file_text
-            except Exception:
-                pass  # extraction échouée — on continue sans
-
-        llm_result = llm_quality_check(df, description=description)
-        execution_result = execute_problems(df, llm_result.get("problems", []))
-        llm_score_result = compute_llm_score(execution_result)
-        merged_analysis = {
-            "overall_assessment": execution_result.get("overall_assessment") or llm_result.get("overall_assessment"),
-            "score":            llm_score_result["score"],
-            "grade":            llm_score_result["grade"],
-            "critical_pillars": llm_score_result["critical_pillars"],
-            "accuracy":    execution_result.get("accuracy"),
-            "consistency": execution_result.get("consistency"),
-            "coherence":   execution_result.get("consistency") or execution_result.get("coherence"),
-            "timeliness":  execution_result.get("timeliness"),
-            "validity":    execution_result.get("validity"),
-            "recommendations": llm_result.get("recommendations", []),
-            "debug": {
-                "initial":  llm_result,
-                "executed": execution_result,
-            },
-        }
-
-        return jsonify({"success": True, "analysis": merged_analysis}), 200
-
-    except FileNotFoundError as e:
-        return jsonify({"error": str(e)}), 404
     except ValueError as e:
         return jsonify({"error": str(e)}), 400
     except Exception as e:
