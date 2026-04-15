@@ -400,7 +400,6 @@ export default function DataQuality({ activeFile, setActiveFile, theme = 'light'
     <div className="data-quality-page">
       <div className="page-header">
         <h1>🔍 Data Quality</h1>
-        <p>Analyse complète de la qualité des données avec insights IA</p>
       </div>
 
       {/* Steps progress */}

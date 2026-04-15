@@ -15,7 +15,7 @@ logging.getLogger("httpcore").setLevel(logging.WARNING)
 
 # ── Blueprints ──────────────────────────────────────────────────────────────
 from routes.data_quality_routes import data_quality_bp
-# from routes.data_cleaning_routes import data_cleaning_bp      # compartiment 2
+from routes.data_cleaning_routes import data_cleaning_bp      # compartiment 2
 # from routes.feature_engineering_routes import feature_eng_bp  # compartiment 3
 # from routes.modeling_routes import modeling_bp                 # compartiment 4
 # from routes.pipeline_routes import pipeline_bp                 # compartiment 5
@@ -25,7 +25,10 @@ PORT = 5000
 
 # ── Enregistrement des blueprints ───────────────────────────────────────────
 app.register_blueprint(data_quality_bp, url_prefix="/api/data-quality")
-
+app.register_blueprint(data_cleaning_bp, url_prefix="/api/data-cleaning")  # compartiment 2
+# app.register_blueprint(feature_eng_bp, url_prefix="/api/feature-engineering")  # compartiment 3
+# app.register_blueprint(modeling_bp, url_prefix="/api/modeling")                 # compartiment 4
+# app.register_blueprint(pipeline_bp, url_prefix="/api/pipeline")                 # compartiment 5
 # ── Routes existantes (inchangées) ──────────────────────────────────────────
 @app.route('/api/test', methods=['GET'])
 def test():

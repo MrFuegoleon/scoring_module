@@ -103,7 +103,7 @@ router.post(
       );
       res.json(data);
     } catch (e) {
-      if (descFile) fs.unlink(descFile.path, () => {});
+      if (file) fs.unlink(file.path, () => {});
       handleError(res, e);
     }
   },

@@ -7,7 +7,7 @@ import { fileURLToPath } from "url";
 
 // ── Routers (compartiments) ─────────────────────────────────────────────────
 import dataQualityRouter from "./routes/dataQuality.routes.js";
-// import dataCleaningRouter    from "./routes/dataCleaning.routes.js";      // compartiment 2
+import dataCleaningRouter from "./routes/dataCleaning.routes.js";
 // import featureEngRouter      from "./routes/featureEngineering.routes.js"; // compartiment 3
 // import modelingRouter        from "./routes/modeling.routes.js";           // compartiment 4
 // import pipelineRouter        from "./routes/pipeline.routes.js";           // compartiment 5
@@ -16,9 +16,16 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
 const PORT = 3001;
 
-app.use(cors({
-  exposedHeaders: ['X-Report-Id', 'X-File-Hash', 'X-Generated-At', 'X-From-Cache'],
-}));
+app.use(
+  cors({
+    exposedHeaders: [
+      "X-Report-Id",
+      "X-File-Hash",
+      "X-Generated-At",
+      "X-From-Cache",
+    ],
+  }),
+);
 app.use(express.json());
 
 // ── Multer (stockage temporaire uploads) ────────────────────────────────────
@@ -26,7 +33,7 @@ export const upload = multer({ dest: "uploads/" });
 
 // ── Enregistrement des compartiments ───────────────────────────────────────
 app.use("/api/data-quality", dataQualityRouter);
-// app.use("/api/data-cleaning",    dataCleaningRouter);
+app.use("/api/data-cleaning", dataCleaningRouter);
 // app.use("/api/feature-engineering", featureEngRouter);
 // app.use("/api/modeling",         modelingRouter);
 // app.use("/api/pipeline",         pipelineRouter);
