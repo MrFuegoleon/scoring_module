@@ -7,7 +7,7 @@ import PipelineComplet from './components/PipelineComplet'
 
 const NAV_ITEMS = [
   { key: 'quality',   label: 'Data Quality',    icon: '🔍', badge: 'Actif',   badgeClass: 'badge-active' },
-  { key: 'cleaning',  label: 'Data Cleaning',   icon: '🧹', badge: 'Bientôt', badgeClass: 'badge-soon'   },
+  { key: 'cleaning',  label: 'Data Cleaning',   icon: '🧹', badge: 'Actif', badgeClass: 'badge-active' },
   { key: 'modelling', label: 'Data Modelling',  icon: '🤖', badge: 'Bientôt', badgeClass: 'badge-soon'   },
   { key: 'pipeline',  label: 'Pipeline Complet', icon: '⚡', badge: 'Bientôt', badgeClass: 'badge-soon'   },
 ]

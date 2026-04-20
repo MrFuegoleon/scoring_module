@@ -7,19 +7,22 @@ import warnings
 _NULL_LIKE = {
     '', 'null', 'nan', 'NAN', 'none', 'None', 'NULL',
     'NA', 'N/A', '#N/A', 'n/a', 'NaT', 'nat', 'missing',
+    'unknown', 'unk', 'undefined', '?', 'nd', 'n.d.',
 }
 
 # Mots-clés dans le nom de colonne → candidat ID/Code (pas de conversion numérique)
 _ID_KEYWORDS = {'id', 'code', 'zip', 'phone', 'tel', 'iban', 'siret', 'postal', 'nir', 'ean', 'isbn'}
 
-# Mapping booléen exhaustif
+# Mapping booléen exhaustif — couvre les encodages mixtes (1/Y/yes/no/N/0…)
 _BOOL_MAP = {
     'oui': True,  'non': False,
     'true': True, 'false': False,
     '1': True,    '0': False,
     1: True,      0: False,
     'yes': True,  'no': False,
-    'o': True,    'n': False,
+    'y': True,    'n': False,
+    'o': True,
+    't': True,    'f': False,
     'vrai': True, 'faux': False,
 }
 
@@ -76,10 +79,15 @@ class DataCleaningService:
                 continue
 
             # ── 1. BOOLÉEN ──────────────────────────────────────────────────
+            # Détecte les booléens à encodage mixte (1/Y/yes/no/N/0…)
+            # Pas de contrainte de cardinalité : on vérifie que TOUTES
+            # les valeurs non-nulles sont dans le mapping booléen.
             unique_vals = df[col].dropna().unique()
-            if len(unique_vals) == 2:
-                lower_vals = [str(v).lower() for v in unique_vals]
-                if all(v in _BOOL_MAP for v in lower_vals):
+            lower_vals  = [str(v).lower() for v in unique_vals]
+            if len(unique_vals) >= 2 and all(v in _BOOL_MAP for v in lower_vals):
+                # Vérifier qu'il y a au moins une valeur True ET une False
+                mapped = {_BOOL_MAP[v] for v in lower_vals}
+                if True in mapped and False in mapped:
                     df[col] = df[col].apply(
                         lambda x: _BOOL_MAP.get(str(x).lower()) if pd.notna(x) else np.nan
                     )
@@ -125,16 +133,22 @@ class DataCleaningService:
                         df[col]    = temp_num.astype('category')
                         final_type = 'category'
 
-                    # Entiers sans NaN → downcast
-                    elif is_all_int and conversion_ratio > 0.95 and not has_nan:
-                        col_min = int(non_null_num.min())
-                        col_max = int(non_null_num.max())
-                        if   -128          <= col_min and col_max <= 127:          target = np.int8
-                        elif -32_768       <= col_min and col_max <= 32_767:       target = np.int16
-                        elif -2_147_483_648 <= col_min and col_max <= 2_147_483_647: target = np.int32
-                        else:                                                        target = np.int64
-                        df[col]    = temp_num.astype(target)
-                        final_type = str(df[col].dtype)
+                    # Entiers sans NaN → downcast numpy (int8/16/32/64)
+                    # Avec NaN → float64 (NaN n'existe pas en entier numpy)
+                    # L'imputation corrigera les NaN ; re-typer ensuite si besoin
+                    elif is_all_int and conversion_ratio > 0.8:
+                        if has_nan:
+                            df[col]    = temp_num          # float64, NaN préservés
+                            final_type = 'float64'
+                        else:
+                            col_min = int(non_null_num.min())
+                            col_max = int(non_null_num.max())
+                            if   -128            <= col_min and col_max <= 127:           target = np.int8
+                            elif -32_768         <= col_min and col_max <= 32_767:        target = np.int16
+                            elif -2_147_483_648  <= col_min and col_max <= 2_147_483_647: target = np.int32
+                            else:                                                          target = np.int64
+                            df[col]    = temp_num.astype(target)
+                            final_type = str(df[col].dtype)
 
                     # Float
                     else:
@@ -228,12 +242,16 @@ class DataCleaningService:
             t = target_type.lower().strip()
 
             try:
-                # Entiers
+                # Entiers : numpy (int32) si pas de NaN, nullable pandas (Int32) si NaN
                 if t in ('int8', 'int16', 'int32', 'int64'):
                     col_str  = df[col].astype(str).str.replace(',', '.', regex=False)
                     col_str  = col_str.where(df[col].notna(), np.nan)
                     temp_num = pd.to_numeric(col_str, errors='coerce')
-                    df[col]  = temp_num.astype(t)
+                    if temp_num.isna().any():
+                        nullable_type = t[0].upper() + t[1:]  # int32 → Int32
+                        df[col] = temp_num.round(0).astype(nullable_type)
+                    else:
+                        df[col] = temp_num.astype(t)
 
                 # Flottants
                 elif t in ('float32', 'float64'):
@@ -287,31 +305,156 @@ class DataCleaningService:
         return df, apply_report
 
     # ─────────────────────────────────────────────────────────────────────────
-    # 2. SUPPRESSION DES DOUBLONS
+    # 2. DOUBLONS — détection de la clé primaire
+    # ─────────────────────────────────────────────────────────────────────────
+    @staticmethod
+    def _find_primary_key(df: pd.DataFrame) -> str | None:
+        """
+        Cherche une colonne clé primaire parmi les colonnes dont le nom
+        contient un mot-clé ID (_ID_KEYWORDS).
+        Critères : pas de null, cardinalité ≥ 90 % des lignes.
+        Retourne la colonne la plus unique, ou None si introuvable.
+        """
+        total = len(df)
+        if total == 0:
+            return None
+
+        candidates = []
+        for col in df.columns:
+            if not _is_id_candidate(col):
+                continue
+            if df[col].isna().any():
+                continue
+            ratio = df[col].nunique() / total
+            if ratio >= 0.9:
+                candidates.append((col, ratio))
+
+        if not candidates:
+            return None
+
+        # Colonne la plus unique en premier
+        candidates.sort(key=lambda x: x[1], reverse=True)
+        return candidates[0][0]
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # 2b. DOUBLONS — détection seule (read-only)
+    # ─────────────────────────────────────────────────────────────────────────
+    @staticmethod
+    def detect_duplicates(df: pd.DataFrame) -> dict:
+        """
+        Compte les doublons sans modifier le dataframe.
+        Stratégie :
+          1. Si une clé primaire est trouvée → doublon = même valeur d'ID
+          2. Sinon → doublon = ligne entière identique
+        """
+        initial_rows = len(df)
+        pk_col = DataCleaningService._find_primary_key(df)
+
+        if pk_col:
+            n_duplicates = int(df.duplicated(subset=[pk_col]).sum())
+            method = f"clé primaire · colonne « {pk_col} »"
+        else:
+            n_duplicates = int(df.duplicated().sum())
+            method = "toutes les colonnes (clé primaire introuvable)"
+
+        return {
+            "initial_rows":       initial_rows,
+            "duplicates_found":   n_duplicates,
+            "rows_after":         initial_rows - n_duplicates,
+            "rows_removed":       n_duplicates,
+            "percentage_removed": round(n_duplicates / initial_rows * 100, 2) if initial_rows > 0 else 0,
+            "pk_column":          pk_col,
+            "method":             method,
+        }
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # 2c. SUPPRESSION DES DOUBLONS — application
     # ─────────────────────────────────────────────────────────────────────────
     @staticmethod
     def remove_duplicates(df: pd.DataFrame):
+        """
+        Supprime les doublons en utilisant la même stratégie que detect_duplicates.
+        """
         initial_rows = len(df)
-        n_duplicates = int(df.duplicated().sum())
-        df_cleaned   = df.drop_duplicates().reset_index(drop=True)
+        pk_col = DataCleaningService._find_primary_key(df)
+
+        if pk_col:
+            n_duplicates = int(df.duplicated(subset=[pk_col]).sum())
+            df_cleaned   = df.drop_duplicates(subset=[pk_col]).reset_index(drop=True)
+            method       = f"clé primaire · colonne « {pk_col} »"
+        else:
+            n_duplicates = int(df.duplicated().sum())
+            df_cleaned   = df.drop_duplicates().reset_index(drop=True)
+            method       = "toutes les colonnes (clé primaire introuvable)"
 
         report = {
-            "initial_rows": initial_rows,
-            "duplicates_found": n_duplicates,
-            "rows_after": len(df_cleaned),
-            "rows_removed": initial_rows - len(df_cleaned),
+            "initial_rows":       initial_rows,
+            "duplicates_found":   n_duplicates,
+            "rows_after":         len(df_cleaned),
+            "rows_removed":       initial_rows - len(df_cleaned),
             "percentage_removed": round(n_duplicates / initial_rows * 100, 2) if initial_rows > 0 else 0,
+            "pk_column":          pk_col,
+            "method":             method,
         }
         return df_cleaned, report
 
     # ─────────────────────────────────────────────────────────────────────────
-    # 3. DÉTECTION ET TRAITEMENT DES OUTLIERS (IQR + winsorisation)
+    # 3. OUTLIERS — détection seule (read-only)
     # ─────────────────────────────────────────────────────────────────────────
     @staticmethod
-    def detect_and_treat_outliers(df: pd.DataFrame):
+    def detect_outliers(df: pd.DataFrame) -> dict:
+        """
+        Analyse IQR sur toutes les colonnes numériques, sans modifier le df.
+        Retourne un rapport par colonne contenant des outliers.
+        """
         numeric_cols = df.select_dtypes(include=[np.number]).columns
         report = {}
+        total = len(df)
 
+        for col in numeric_cols:
+            col_data = df[col].dropna()
+            if len(col_data) < 4:
+                continue
+            Q1  = col_data.quantile(0.25)
+            Q3  = col_data.quantile(0.75)
+            IQR = Q3 - Q1
+            if IQR == 0:
+                continue
+            lower = Q1 - 1.5 * IQR
+            upper = Q3 + 1.5 * IQR
+            n_out = int(((df[col] < lower) | (df[col] > upper)).sum())
+            if n_out > 0:
+                report[col] = {
+                    "outliers_count": n_out,
+                    "outliers_pct":   round(n_out / total * 100, 1),
+                    "lower_bound":    round(float(lower), 4),
+                    "upper_bound":    round(float(upper), 4),
+                    "q1":             round(float(Q1), 4),
+                    "q3":             round(float(Q3), 4),
+                    "iqr":            round(float(IQR), 4),
+                    "col_min":        round(float(col_data.min()), 4),
+                    "col_max":        round(float(col_data.max()), 4),
+                }
+
+        return report
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # 3b. OUTLIERS — application de la stratégie choisie
+    # ─────────────────────────────────────────────────────────────────────────
+    @staticmethod
+    def apply_outlier_strategy(df: pd.DataFrame, strategy: str = 'drop'):
+        """
+        Applique la stratégie choisie par l'utilisateur sur les outliers IQR.
+
+        strategy='drop'       → supprime les lignes contenant au moins un outlier
+        strategy='winsorise'  → clip chaque colonne à ses bornes IQR
+        """
+        numeric_cols = df.select_dtypes(include=[np.number]).columns
+        col_report   = {}
+        rows_before  = len(df)
+
+        # ── Calcul des bornes par colonne ────────────────────────────────────
+        bounds = {}
         for col in numeric_cols:
             try:
                 col_data = df[col].dropna()
@@ -322,71 +465,247 @@ class DataCleaningService:
                 if IQR == 0:
                     continue
                 lower, upper = Q1 - 1.5 * IQR, Q3 + 1.5 * IQR
-                n_out = int(((df[col] < lower) | (df[col] > upper)).sum())
+                mask  = (df[col] < lower) | (df[col] > upper)
+                n_out = int(mask.sum())
                 if n_out > 0:
-                    df[col] = df[col].clip(lower=lower, upper=upper)
-                    report[col] = {
-                        "outliers_count": n_out,
-                        "lower_bound": round(float(lower), 4),
-                        "upper_bound": round(float(upper), 4),
-                        "treatment": "winsorisation (clip aux bornes IQR)",
+                    bounds[col] = {
+                        "lower": lower, "upper": upper,
+                        "n_out": n_out, "mask": mask,
                     }
             except Exception:
                 pass
 
-        return df, report
+        if not bounds:
+            return df, {}
+
+        # ── Application ──────────────────────────────────────────────────────
+        if strategy == 'drop':
+            # Union des masques : on supprime toute ligne outlier sur au moins 1 colonne
+            global_mask = pd.Series(False, index=df.index)
+            for col, b in bounds.items():
+                global_mask |= b["mask"]
+                col_report[col] = {
+                    "outliers_count": b["n_out"],
+                    "lower_bound":    round(float(b["lower"]), 4),
+                    "upper_bound":    round(float(b["upper"]), 4),
+                    "treatment":      "suppression des lignes",
+                }
+            df = df[~global_mask].reset_index(drop=True)
+
+        else:  # winsorise
+            for col, b in bounds.items():
+                df[col] = df[col].clip(lower=b["lower"], upper=b["upper"])
+                col_report[col] = {
+                    "outliers_count": b["n_out"],
+                    "lower_bound":    round(float(b["lower"]), 4),
+                    "upper_bound":    round(float(b["upper"]), 4),
+                    "treatment":      "winsorisation (clip aux bornes IQR)",
+                }
+
+        rows_after   = len(df)
+        rows_dropped = rows_before - rows_after
+
+        # Métadonnées globales ajoutées au rapport
+        col_report["_meta"] = {
+            "strategy":     strategy,
+            "rows_before":  rows_before,
+            "rows_after":   rows_after,
+            "rows_dropped": rows_dropped,
+        }
+
+        return df, col_report
+
+    # Alias conservé pour rétrocompatibilité interne
+    @staticmethod
+    def detect_and_treat_outliers(df: pd.DataFrame):
+        return DataCleaningService.apply_outlier_strategy(df, strategy='winsorise')
 
     # ─────────────────────────────────────────────────────────────────────────
-    # 4. IMPUTATION DES VALEURS MANQUANTES
+    # 4. IMPUTATION — détection seule (read-only)
     # ─────────────────────────────────────────────────────────────────────────
     @staticmethod
-    def impute_missing_values(df: pd.DataFrame):
+    def detect_missing(df: pd.DataFrame) -> dict:
+        """
+        Analyse les valeurs manquantes par colonne sans modifier le df.
+        Propose une stratégie par défaut selon le type et le taux de missing.
+        """
+        total  = len(df)
         report = {}
 
         for col in df.columns:
-            try:
+            n_missing = int(df[col].isna().sum())
+            if n_missing == 0:
+                continue
+
+            pct       = round(n_missing / total * 100, 1)
+            dtype_str = str(df[col].dtype)
+
+            if pct > 60:
+                proposed = 'drop_column'
+            elif pct > 30:
+                proposed = 'constant'
+            elif pd.api.types.is_numeric_dtype(df[col]):
+                proposed = 'median'
+            elif pd.api.types.is_datetime64_any_dtype(df[col]):
+                proposed = 'ffill'
+            else:
+                proposed = 'mode'
+
+            report[col] = {
+                'missing_count':    n_missing,
+                'missing_pct':      pct,
+                'dtype':            dtype_str,
+                'proposed_strategy': proposed,
+            }
+
+        return report
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # 4b. IMPUTATION — application des stratégies confirmées
+    # ─────────────────────────────────────────────────────────────────────────
+    @staticmethod
+    def impute_missing_values(df: pd.DataFrame, confirmed_strategies: dict,
+                              create_indicators: bool = False):
+        """
+        Applique les stratégies d'imputation confirmées par l'utilisateur.
+        confirmed_strategies : {col: strategy}
+        create_indicators    : si True, crée une colonne {col}_missing (0/1)
+                               avant imputation pour chaque colonne traitée
+                               (sauf drop_rows où la ligne disparaît de toute façon).
+
+        Stratégies disponibles :
+          median      · numérique  → médiane
+          mean        · numérique  → moyenne
+          constant    · num → -999 / cat → "unknown"
+          mode        · catégoriel → valeur la plus fréquente
+          ffill       · datetime   → propagation avant
+          bfill       · datetime   → propagation arrière
+          drop_rows   · toute      → supprime les lignes avec NaN sur cette colonne
+          drop_column · toute      → supprime la colonne entière
+        """
+        report         = {}
+        cols_to_drop   = []
+        drop_rows_mask = pd.Series(False, index=df.index)
+        indicators_created = []
+
+        # ── Création des indicateurs AVANT imputation ────────────────────────
+        if create_indicators:
+            for col, strategy in confirmed_strategies.items():
+                if col not in df.columns:
+                    continue
+                if strategy == 'drop_rows':
+                    # La ligne va disparaître — l'indicateur n'aurait aucune valeur
+                    continue
                 n_missing = int(df[col].isna().sum())
                 if n_missing == 0:
                     continue
-                missing_pct = round(n_missing / len(df) * 100, 2)
-                dtype_str   = str(df[col].dtype)
+                indicator_name = f"{col}_missing"
+                # Insérer juste après la colonne originale
+                pos = df.columns.get_loc(col) + 1
+                df.insert(pos, indicator_name, df[col].isna().astype(int))
+                indicators_created.append(indicator_name)
 
-                if pd.api.types.is_numeric_dtype(df[col]):
-                    median_val = df[col].median()
-                    df[col]    = df[col].fillna(median_val)
-                    strategy   = f"mediane ({round(float(median_val), 4)})"
+        for col, strategy in confirmed_strategies.items():
+            if col not in df.columns:
+                continue
 
-                elif dtype_str == 'category' or df[col].dtype == object:
-                    mode_series = df[col].mode()
-                    if len(mode_series) > 0:
-                        mode_val = mode_series.iloc[0]
-                        if dtype_str == 'category' and mode_val not in df[col].cat.categories:
-                            df[col] = df[col].cat.add_categories([mode_val])
-                        df[col]  = df[col].fillna(mode_val)
-                        strategy = f"mode ({mode_val})"
-                    else:
-                        strategy = "ignoree (aucune valeur disponible)"
+            n_missing = int(df[col].isna().sum())
+            if n_missing == 0:
+                continue
 
-                elif pd.api.types.is_datetime64_any_dtype(df[col]):
-                    df[col]  = df[col].ffill().bfill()
-                    strategy = "propagation temporelle (ffill/bfill)"
+            dtype_str = str(df[col].dtype)
+
+            try:
+                if strategy == 'drop_column':
+                    cols_to_drop.append(col)
+                    report[col] = {
+                        'strategy': 'drop_column',
+                        'missing_count': n_missing, 'dtype': dtype_str,
+                    }
+
+                elif strategy == 'drop_rows':
+                    drop_rows_mask |= df[col].isna()
+                    report[col] = {
+                        'strategy': 'drop_rows',
+                        'missing_count': n_missing, 'dtype': dtype_str,
+                    }
+
+                elif strategy == 'median':
+                    val    = df[col].median()
+                    df[col] = df[col].fillna(val)
+                    report[col] = {
+                        'strategy': 'median', 'value': round(float(val), 4),
+                        'missing_count': n_missing, 'dtype': dtype_str,
+                    }
+
+                elif strategy == 'mean':
+                    val    = df[col].mean()
+                    df[col] = df[col].fillna(val)
+                    report[col] = {
+                        'strategy': 'mean', 'value': round(float(val), 4),
+                        'missing_count': n_missing, 'dtype': dtype_str,
+                    }
+
+                elif strategy == 'mode':
+                    mode_s = df[col].mode()
+                    if len(mode_s) > 0:
+                        val = mode_s.iloc[0]
+                        if dtype_str == 'category' and val not in df[col].cat.categories:
+                            df[col] = df[col].cat.add_categories([val])
+                        df[col] = df[col].fillna(val)
+                        report[col] = {
+                            'strategy': 'mode', 'value': str(val),
+                            'missing_count': n_missing, 'dtype': dtype_str,
+                        }
+
+                elif strategy == 'constant':
+                    val = -999 if pd.api.types.is_numeric_dtype(df[col]) else 'unknown'
+                    if dtype_str == 'category' and val not in df[col].cat.categories:
+                        df[col] = df[col].cat.add_categories([val])
+                    df[col] = df[col].fillna(val)
+                    report[col] = {
+                        'strategy': 'constant', 'value': str(val),
+                        'missing_count': n_missing, 'dtype': dtype_str,
+                    }
+
+                elif strategy == 'ffill':
+                    df[col] = df[col].ffill().bfill()
+                    report[col] = {
+                        'strategy': 'ffill',
+                        'missing_count': n_missing, 'dtype': dtype_str,
+                    }
+
+                elif strategy == 'bfill':
+                    df[col] = df[col].bfill().ffill()
+                    report[col] = {
+                        'strategy': 'bfill',
+                        'missing_count': n_missing, 'dtype': dtype_str,
+                    }
 
                 else:
-                    strategy = "ignoree (type non supporte)"
-
-                report[col] = {
-                    "missing_count": n_missing,
-                    "missing_percentage": missing_pct,
-                    "strategy": strategy,
-                    "dtype": dtype_str,
-                }
+                    report[col] = {
+                        'strategy': 'ignored',
+                        'missing_count': n_missing, 'dtype': dtype_str,
+                    }
 
             except Exception as e:
                 report[col] = {
-                    "missing_count": int(df[col].isna().sum()),
-                    "missing_percentage": 0,
-                    "strategy": f"erreur : {str(e)}",
-                    "dtype": str(df[col].dtype),
+                    'strategy': f'error: {str(e)}',
+                    'missing_count': n_missing, 'dtype': dtype_str,
                 }
+
+        # Appliquer les suppressions en fin de boucle
+        df = df.drop(columns=cols_to_drop, errors='ignore')
+        df = df[~drop_rows_mask].reset_index(drop=True)
+
+        rows_dropped = int(drop_rows_mask.sum())
+        report['_meta'] = {
+            'rows_dropped':        rows_dropped,
+            'cols_dropped':        len(cols_to_drop),
+            'cols_imputed':        len([k for k in report if k != '_meta' and report[k]['strategy'] not in ('drop_column', 'drop_rows', 'ignored')]),
+            'rows_after':          len(df),
+            'cols_after':          len(df.columns),
+            'indicators_created':  indicators_created,
+        }
 
         return df, report
