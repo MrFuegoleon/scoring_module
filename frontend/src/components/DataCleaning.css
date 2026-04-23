@@ -1307,6 +1307,52 @@
 .doublon-hero-title { font-weight: 600; font-size: 0.92rem; }
 .doublon-hero-sub   { font-size: 0.78rem; margin-top: 0.15rem; opacity: 0.85; }
 
+/* Sélecteur de clé primaire dans le modal doublons */
+.doublon-pk-selector {
+  margin-top: 0.85rem;
+  padding: 0.75rem 1rem;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+}
+.doublon-pk-label {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: #374151;
+  margin-bottom: 0.5rem;
+}
+.doublon-pk-hint {
+  font-size: 0.75rem;
+  font-weight: 400;
+  color: #6366f1;
+  background: #ede9fe;
+  padding: 0.15rem 0.45rem;
+  border-radius: 4px;
+}
+.doublon-pk-select {
+  width: 100%;
+  padding: 0.45rem 0.7rem;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  font-size: 0.85rem;
+  background: #fff;
+  color: #111827;
+  cursor: pointer;
+}
+.doublon-pk-select:focus {
+  outline: none;
+  border-color: #6366f1;
+  box-shadow: 0 0 0 2px #e0e7ff;
+}
+.doublon-pk-suggestion {
+  font-size: 0.78rem;
+  color: #6b7280;
+  margin-top: 0.4rem;
+}
+
 /* Applying spinner overlay */
 .applying-card {
   display: flex;

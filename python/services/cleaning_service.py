@@ -308,6 +308,25 @@ class DataCleaningService:
     # 2. DOUBLONS — détection de la clé primaire
     # ─────────────────────────────────────────────────────────────────────────
     @staticmethod
+    def find_high_cardinality_candidates(df: pd.DataFrame) -> list:
+        """
+        Retourne toutes les colonnes sans valeurs nulles dont la cardinalité
+        est ≥ 90 % du nombre de lignes, triées par cardinalité décroissante.
+        """
+        total = len(df)
+        if total == 0:
+            return []
+        candidates = []
+        for col in df.columns:
+            if df[col].isna().any():
+                continue
+            ratio = df[col].nunique() / total
+            if ratio >= 0.9:
+                candidates.append({"column": col, "cardinality_ratio": round(ratio, 4)})
+        candidates.sort(key=lambda x: x["cardinality_ratio"], reverse=True)
+        return candidates
+
+    @staticmethod
     def _find_primary_key(df: pd.DataFrame) -> str | None:
         """
         Cherche une colonne clé primaire parmi les colonnes dont le nom
@@ -346,9 +365,13 @@ class DataCleaningService:
         Stratégie :
           1. Si une clé primaire est trouvée → doublon = même valeur d'ID
           2. Sinon → doublon = ligne entière identique
+        Retourne aussi high_cardinality_candidates (cardinalité ≥ 90 %) et
+        suggested_pk pour que l'utilisateur puisse valider ou choisir.
         """
         initial_rows = len(df)
         pk_col = DataCleaningService._find_primary_key(df)
+        high_cardinality_candidates = DataCleaningService.find_high_cardinality_candidates(df)
+        suggested_pk = pk_col or (high_cardinality_candidates[0]["column"] if high_cardinality_candidates else None)
 
         if pk_col:
             n_duplicates = int(df.duplicated(subset=[pk_col]).sum())
@@ -358,25 +381,32 @@ class DataCleaningService:
             method = "toutes les colonnes (clé primaire introuvable)"
 
         return {
-            "initial_rows":       initial_rows,
-            "duplicates_found":   n_duplicates,
-            "rows_after":         initial_rows - n_duplicates,
-            "rows_removed":       n_duplicates,
-            "percentage_removed": round(n_duplicates / initial_rows * 100, 2) if initial_rows > 0 else 0,
-            "pk_column":          pk_col,
-            "method":             method,
+            "initial_rows":                initial_rows,
+            "duplicates_found":            n_duplicates,
+            "rows_after":                  initial_rows - n_duplicates,
+            "rows_removed":                n_duplicates,
+            "percentage_removed":          round(n_duplicates / initial_rows * 100, 2) if initial_rows > 0 else 0,
+            "pk_column":                   pk_col,
+            "suggested_pk":                suggested_pk,
+            "high_cardinality_candidates": high_cardinality_candidates,
+            "all_columns":                 list(df.columns),
+            "method":                      method,
         }
 
     # ─────────────────────────────────────────────────────────────────────────
     # 2c. SUPPRESSION DES DOUBLONS — application
     # ─────────────────────────────────────────────────────────────────────────
     @staticmethod
-    def remove_duplicates(df: pd.DataFrame):
+    def remove_duplicates(df: pd.DataFrame, user_pk_column: str = None):
         """
-        Supprime les doublons en utilisant la même stratégie que detect_duplicates.
+        Supprime les doublons.
+        Priorité : user_pk_column (choix utilisateur) > _find_primary_key > toutes colonnes.
         """
         initial_rows = len(df)
-        pk_col = DataCleaningService._find_primary_key(df)
+        if user_pk_column and user_pk_column in df.columns:
+            pk_col = user_pk_column
+        else:
+            pk_col = DataCleaningService._find_primary_key(df)
 
         if pk_col:
             n_duplicates = int(df.duplicated(subset=[pk_col]).sum())

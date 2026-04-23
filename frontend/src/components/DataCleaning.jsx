@@ -167,22 +167,22 @@ function TypesReviewSection({ detectData, userTypes, onTypeChange }) {
 }
 
 // ── Section doublons dans le modal ────────────────────────────────────────────
-function DoublonsReviewSection({ doublonsReport }) {
+function DoublonsReviewSection({ doublonsReport, selectedPk, onPkChange }) {
   if (!doublonsReport) return null
-  const found  = doublonsReport.duplicates_found ?? 0
-  const pct    = doublonsReport.percentage_removed ?? 0
-  const pkCol  = doublonsReport.pk_column
-  const method = doublonsReport.method
+  const found       = doublonsReport.duplicates_found ?? 0
+  const pct         = doublonsReport.percentage_removed ?? 0
+  const suggestedPk = doublonsReport.suggested_pk
+  const allColumns  = doublonsReport.all_columns ?? []
+  const candidates  = doublonsReport.high_cardinality_candidates ?? []
 
   return (
     <div className="modal-section">
       <div className="modal-section-header">
         <h3>🔁 Suppression des doublons</h3>
         <div className="modal-section-chips">
-          <span className="rsummary-chip rsummary-info">Traitement automatique</span>
-          {pkCol
-            ? <span className="rsummary-chip rsummary-ok">🔑 PK détectée · {pkCol}</span>
-            : <span className="rsummary-chip rsummary-mod">⚠ PK introuvable · toutes colonnes</span>
+          {suggestedPk
+            ? <span className="rsummary-chip rsummary-ok">🔑 Clé proposée · {selectedPk || suggestedPk}</span>
+            : <span className="rsummary-chip rsummary-mod">⚠ Aucune clé détectée · toutes colonnes</span>
           }
         </div>
       </div>
@@ -199,9 +199,45 @@ function DoublonsReviewSection({ doublonsReport }) {
             {found > 0
               ? `${doublonsReport.initial_rows} lignes → ${doublonsReport.rows_after} lignes (${pct}% supprimé) · `
               : ''}
-            Méthode : {method}
+            {selectedPk
+              ? `Clé choisie : ${selectedPk}`
+              : suggestedPk
+                ? `Clé suggérée : ${suggestedPk}`
+                : 'Méthode : toutes les colonnes'}
           </div>
         </div>
+      </div>
+
+      {/* Sélection de la clé primaire */}
+      <div className="doublon-pk-selector">
+        <div className="doublon-pk-label">
+          <span>🔑 Colonne identifiant unique (clé primaire)</span>
+          {candidates.length > 0 && (
+            <span className="doublon-pk-hint">
+              {candidates.length} colonne{candidates.length > 1 ? 's' : ''} avec cardinalité ≥ 90 % détectée{candidates.length > 1 ? 's' : ''}
+            </span>
+          )}
+        </div>
+        <select
+          className="doublon-pk-select"
+          value={selectedPk ?? suggestedPk ?? ''}
+          onChange={e => onPkChange(e.target.value || null)}
+        >
+          <option value="">— Toutes les colonnes (pas de clé)</option>
+          {allColumns.map(col => {
+            const candidate = candidates.find(c => c.column === col)
+            return (
+              <option key={col} value={col}>
+                {col}{candidate ? ` — cardinalité ${(candidate.cardinality_ratio * 100).toFixed(1)}%` : ''}
+              </option>
+            )
+          })}
+        </select>
+        {suggestedPk && !selectedPk && (
+          <p className="doublon-pk-suggestion">
+            Suggestion automatique basée sur la cardinalité : <strong>{suggestedPk}</strong>
+          </p>
+        )}
       </div>
     </div>
   )
@@ -787,6 +823,7 @@ export default function DataCleaning({ activeFile }) {
   // Choix utilisateur — pipeline principal
   const [userTypes,           setUserTypes]           = useState({})
   const [userOutlierStrategy, setUserOutlierStrategy] = useState('drop')
+  const [userPkColumn,        setUserPkColumn]        = useState(null)
 
   // Résultats après application (phase confirm)
   const [typesResult,    setTypesResult]    = useState(null)
@@ -900,6 +937,7 @@ export default function DataCleaning({ activeFile }) {
     fd.append('session_id', sessionId)
     fd.append('confirmed_types', JSON.stringify(userTypes))
     fd.append('outlier_strategy', userOutlierStrategy)
+    if (userPkColumn) fd.append('user_pk_column', userPkColumn)
 
     try {
       const res  = await fetch('/api/data-cleaning/pipeline/confirm', { method: 'POST', body: fd })
@@ -1340,7 +1378,11 @@ export default function DataCleaning({ activeFile }) {
                 userTypes={userTypes}
                 onTypeChange={(col, type) => setUserTypes(prev => ({ ...prev, [col]: type }))}
               />
-              <DoublonsReviewSection doublonsReport={doublonsReport} />
+              <DoublonsReviewSection
+                doublonsReport={doublonsReport}
+                selectedPk={userPkColumn}
+                onPkChange={setUserPkColumn}
+              />
               <OutliersReviewSection
                 outliersReport={outliersReport}
                 strategy={userOutlierStrategy}

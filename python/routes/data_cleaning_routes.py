@@ -142,7 +142,8 @@ def pipeline_confirm():
         df, types_apply_report = DataCleaningService.apply_confirmed_types(df, confirmed_types)
 
         # ── Étape 2 : suppression des doublons ───────────────────────────────
-        df, doublons_apply_report = DataCleaningService.remove_duplicates(df)
+        user_pk_column = request.form.get('user_pk_column') or None
+        df, doublons_apply_report = DataCleaningService.remove_duplicates(df, user_pk_column=user_pk_column)
 
         # ── Étape 3 : traitement des outliers (stratégie utilisateur) ────────
         df, outliers_apply_report = DataCleaningService.apply_outlier_strategy(df, outlier_strategy)
@@ -296,8 +297,10 @@ def missing_apply():
         except json.JSONDecodeError:
             return jsonify({"error": "confirmed_strategies doit être du JSON valide"}), 400
 
+        create_indicators = request.form.get('create_indicators', 'false').lower() == 'true'
+
         df = SessionStore.get(session_id)
-        df_clean, report = DataCleaningService.impute_missing_values(df, confirmed_strategies)
+        df_clean, report = DataCleaningService.impute_missing_values(df, confirmed_strategies, create_indicators=create_indicators)
 
         SessionStore.update(session_id, df_clean)
 
