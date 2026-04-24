@@ -474,8 +474,6 @@ class DataCleaningService:
     @staticmethod
     def apply_outlier_strategy(df: pd.DataFrame, strategy: str = 'drop'):
         """
-        Applique la stratégie choisie par l'utilisateur sur les outliers IQR.
-
         strategy='drop'       → supprime les lignes contenant au moins un outlier
         strategy='winsorise'  → clip chaque colonne à ses bornes IQR
         """
@@ -483,7 +481,6 @@ class DataCleaningService:
         col_report   = {}
         rows_before  = len(df)
 
-        # ── Calcul des bornes par colonne ────────────────────────────────────
         bounds = {}
         for col in numeric_cols:
             try:
@@ -508,9 +505,7 @@ class DataCleaningService:
         if not bounds:
             return df, {}
 
-        # ── Application ──────────────────────────────────────────────────────
         if strategy == 'drop':
-            # Union des masques : on supprime toute ligne outlier sur au moins 1 colonne
             global_mask = pd.Series(False, index=df.index)
             for col, b in bounds.items():
                 global_mask |= b["mask"]
@@ -532,15 +527,11 @@ class DataCleaningService:
                     "treatment":      "winsorisation (clip aux bornes IQR)",
                 }
 
-        rows_after   = len(df)
-        rows_dropped = rows_before - rows_after
-
-        # Métadonnées globales ajoutées au rapport
         col_report["_meta"] = {
             "strategy":     strategy,
             "rows_before":  rows_before,
-            "rows_after":   rows_after,
-            "rows_dropped": rows_dropped,
+            "rows_after":   len(df),
+            "rows_dropped": rows_before - len(df),
         }
 
         return df, col_report

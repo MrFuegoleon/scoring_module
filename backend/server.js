@@ -6,11 +6,9 @@ import path from "path";
 import { fileURLToPath } from "url";
 
 // ── Routers (compartiments) ─────────────────────────────────────────────────
-import dataQualityRouter from "./routes/dataQuality.routes.js";
-import dataCleaningRouter from "./routes/dataCleaning.routes.js";
-// import featureEngRouter      from "./routes/featureEngineering.routes.js"; // compartiment 3
-// import modelingRouter        from "./routes/modeling.routes.js";           // compartiment 4
-// import pipelineRouter        from "./routes/pipeline.routes.js";           // compartiment 5
+import dataQualityRouter   from "./routes/dataQuality.routes.js";
+import dataCleaningRouter  from "./routes/dataCleaning.routes.js";
+import dataModellingRouter from "./routes/dataModelling.routes.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -32,11 +30,9 @@ app.use(express.json());
 export const upload = multer({ dest: "uploads/" });
 
 // ── Enregistrement des compartiments ───────────────────────────────────────
-app.use("/api/data-quality", dataQualityRouter);
-app.use("/api/data-cleaning", dataCleaningRouter);
-// app.use("/api/feature-engineering", featureEngRouter);
-// app.use("/api/modeling",         modelingRouter);
-// app.use("/api/pipeline",         pipelineRouter);
+app.use("/api/data-quality",   dataQualityRouter);
+app.use("/api/data-cleaning",  dataCleaningRouter);
+app.use("/api/data-modelling", dataModellingRouter);
 
 // ── Routes existantes (inchangées) ─────────────────────────────────────────
 app.get("/api/test", (req, res) => {

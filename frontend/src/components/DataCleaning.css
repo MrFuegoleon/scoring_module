@@ -1703,6 +1703,30 @@
   min-width: 2rem;
 }
 
+/* ── Boutons de lancement imputation ── */
+.imp-launch-actions {
+  display: flex;
+  flex-direction: column;
+  gap: .4rem;
+  width: 100%;
+}
+
+.btn-skip-imputation {
+  width: 100%;
+  padding: .4rem .75rem;
+  background: none;
+  border: 1px dashed #d1d5db;
+  border-radius: 7px;
+  font-size: .78rem;
+  color: #6b7280;
+  cursor: pointer;
+  transition: border-color .15s, color .15s;
+}
+.btn-skip-imputation:hover {
+  border-color: #6366f1;
+  color: #6366f1;
+}
+
 /* ── Boutons d'action imputation done ── */
 .imp-done-actions {
   display: flex;

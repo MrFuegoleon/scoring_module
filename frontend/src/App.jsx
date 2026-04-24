@@ -25,7 +25,8 @@ export default function App() {
   const [theme, setTheme]             = useState('light')
 
   // Dataset global — persiste entre les modules
-  const [activeFile, setActiveFile]   = useState(null)
+  const [activeFile,      setActiveFile]      = useState(null)
+  const [cleaningSession, setCleaningSession] = useState(null)
 
   const activeNav = NAV_ITEMS[activeIndex]
 
@@ -139,7 +140,13 @@ export default function App() {
             const Comp = COMPONENTS[item.key]
             return (
               <div key={item.key} style={{ display: activeNav.key === item.key ? 'contents' : 'none' }}>
-                <Comp activeFile={activeFile} setActiveFile={setActiveFile} theme={theme} />
+                <Comp
+                  activeFile={activeFile}
+                  setActiveFile={setActiveFile}
+                  theme={theme}
+                  cleaningSession={cleaningSession}
+                  setCleaningSession={setCleaningSession}
+                />
               </div>
             )
           })}

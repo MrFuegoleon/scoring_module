@@ -804,7 +804,7 @@ function ResultImputation({ report }) {
 // ═════════════════════════════════════════════════════════════════════════════
 // COMPOSANT PRINCIPAL
 // ═════════════════════════════════════════════════════════════════════════════
-export default function DataCleaning({ activeFile }) {
+export default function DataCleaning({ activeFile, setCleaningSession }) {
 
   // pipelineState : idle | running | modal | applying | done
   const [pipelineState, setPipelineState] = useState('idle')
@@ -903,6 +903,7 @@ export default function DataCleaning({ activeFile }) {
       }
 
       setSessionId(data.session_id)
+      if (setCleaningSession) setCleaningSession(data.session_id)
       setDetectData(data)
       setDoublonsReport(data.doublons_report)
       setOutliersReport(data.outliers_report)
@@ -1032,6 +1033,14 @@ export default function DataCleaning({ activeFile }) {
     }
   }
 
+  // ── ÉTAPE 4b : Passer l'imputation ──────────────────────────────────────
+  function skipImputation() {
+    setImputationResult(null)
+    setImpPhase('skipped')
+    addLog('imputation', 'success', 'Imputation ignorée — NaN conservés pour encodage WOE')
+    addLog('pipeline', 'success', '✓ Pipeline complet 4/4 — dataset prêt (NaN conservés)')
+  }
+
   // ── ÉTAPE 5 : Chargement du panneau de vérification ─────────────────────
   async function loadVerification() {
     if (!sessionId) return
@@ -1072,15 +1081,17 @@ export default function DataCleaning({ activeFile }) {
     applying: 'done', done: 'done',
   }[pipelineState]]
 
-  const progressPct = impPhase === 'done' ? 100
-    : pipelineState === 'done'            ? 75
+  const progressPct = (impPhase === 'done' || impPhase === 'skipped') ? 100
+    : pipelineState === 'done' ? 75
     : 0
-  const progressLabel = impPhase === 'done'   ? 'Pipeline complet ✓'
-    : pipelineState === 'done'                ? '3 / 4 étapes · Imputation à venir'
+  const progressLabel = impPhase === 'done'    ? 'Pipeline complet ✓'
+    : impPhase === 'skipped'                   ? 'Pipeline complet ✓ · NaN conservés (WOE)'
+    : pipelineState === 'done'                 ? '3 / 4 étapes · Imputation à venir'
     : ''
 
   const impBadge = CARD_BADGE[
-    impPhase === 'done'      ? 'done'
+    impPhase === 'done'       ? 'done'
+    : impPhase === 'skipped'  ? 'done'
     : impPhase === 'applying' ? 'applying'
     : impPhase === 'modal'    ? 'pending'
     : impPhase === 'detecting'? 'running'
@@ -1229,10 +1240,10 @@ export default function DataCleaning({ activeFile }) {
           <div className="imp-card-row">
             <div
               className={`task-card imp-card
-                ${impPhase === 'done'                     ? 'card-done'    : ''}
+                ${(impPhase === 'done' || impPhase === 'skipped')     ? 'card-done'    : ''}
                 ${impPhase === 'detecting' || impPhase === 'applying' ? 'card-running' : ''}
-                ${impPhase === 'modal'                    ? 'card-pending' : ''}
-                ${!impPhase                               ? 'card-locked'  : ''}`}
+                ${impPhase === 'modal'                                ? 'card-pending' : ''}
+                ${!impPhase                                           ? 'card-locked'  : ''}`}
               style={{ '--tc': '#10b981' }}
             >
               <div className="task-card-top">
@@ -1252,10 +1263,12 @@ export default function DataCleaning({ activeFile }) {
                 )}
               </div>
               <div className="task-card-footer">
-                {impPhase === 'done'
+                {(impPhase === 'done' || impPhase === 'skipped')
                   ? (
                     <div className="imp-done-actions">
-                      <button className="btn-view" onClick={() => goToTab('imputation')}>👁 Voir les résultats</button>
+                      {impPhase === 'done' && (
+                        <button className="btn-view" onClick={() => goToTab('imputation')}>👁 Voir les résultats</button>
+                      )}
                       <button
                         className="btn-run"
                         style={{ '--btn-c': '#6366f1' }}
@@ -1264,14 +1277,23 @@ export default function DataCleaning({ activeFile }) {
                     </div>
                   )
                   : !impPhase && (
-                    <button
-                      className="btn-run"
-                      style={{ '--btn-c': '#10b981' }}
-                      onClick={launchImputation}
-                      disabled={impPhase === 'detecting'}
-                    >
-                      Lancer l'imputation
-                    </button>
+                    <div className="imp-launch-actions">
+                      <button
+                        className="btn-run"
+                        style={{ '--btn-c': '#10b981' }}
+                        onClick={launchImputation}
+                        disabled={impPhase === 'detecting'}
+                      >
+                        Lancer l'imputation
+                      </button>
+                      <button
+                        className="btn-skip-imputation"
+                        onClick={skipImputation}
+                        title="Conserve les NaN — ils seront encodés comme bin manquant lors du WOE"
+                      >
+                        Passer · WOE
+                      </button>
+                    </div>
                   )
                 }
               </div>
