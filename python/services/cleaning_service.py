@@ -614,14 +614,15 @@ class DataCleaningService:
             for col, strategy in confirmed_strategies.items():
                 if col not in df.columns:
                     continue
-                if strategy == 'drop_rows':
-                    # La ligne va disparaître — l'indicateur n'aurait aucune valeur
+                # drop_rows : la ligne disparaît — indicateur inutile
+                # drop_column : la colonne disparaît — indicateur inutile
+                # woe : NaN conservés intentionnellement comme bin '__missing__'
+                if strategy in ('drop_rows', 'drop_column', 'woe'):
                     continue
                 n_missing = int(df[col].isna().sum())
                 if n_missing == 0:
                     continue
                 indicator_name = f"{col}_missing"
-                # Insérer juste après la colonne originale
                 pos = df.columns.get_loc(col) + 1
                 df.insert(pos, indicator_name, df[col].isna().astype(int))
                 indicators_created.append(indicator_name)
@@ -637,7 +638,15 @@ class DataCleaningService:
             dtype_str = str(df[col].dtype)
 
             try:
-                if strategy == 'drop_column':
+                if strategy == 'woe':
+                    # NaN conservés intentionnellement — seront traités comme bin manquant en WOE
+                    report[col] = {
+                        'strategy': 'woe',
+                        'missing_count': n_missing, 'dtype': dtype_str,
+                    }
+                    continue
+
+                elif strategy == 'drop_column':
                     cols_to_drop.append(col)
                     report[col] = {
                         'strategy': 'drop_column',

@@ -1711,20 +1711,67 @@
   width: 100%;
 }
 
-.btn-skip-imputation {
-  width: 100%;
-  padding: .4rem .75rem;
-  background: none;
-  border: 1px dashed #d1d5db;
-  border-radius: 7px;
+/* ── Mode toggle imputation / WOE ── */
+.imp-mode-toggle {
+  display: flex;
+  align-items: center;
+  gap: .75rem;
+  background: #f9fafb;
+  border: 1px solid #e5e7eb;
+  border-radius: 10px;
+  padding: .6rem 1rem;
+  margin-bottom: 1rem;
+  flex-wrap: wrap;
+}
+.imp-mode-label {
+  font-size: .78rem;
+  font-weight: 600;
+  color: #374151;
+  white-space: nowrap;
+}
+.imp-mode-buttons {
+  display: flex;
+  gap: .35rem;
+}
+.imp-mode-btn {
+  padding: .3rem .75rem;
+  border-radius: 6px;
+  border: 1px solid #d1d5db;
+  background: #fff;
   font-size: .78rem;
   color: #6b7280;
   cursor: pointer;
-  transition: border-color .15s, color .15s;
+  transition: all .15s;
 }
-.btn-skip-imputation:hover {
+.imp-mode-btn:hover {
   border-color: #6366f1;
   color: #6366f1;
+}
+.imp-mode-btn.active {
+  background: #6366f1;
+  border-color: #6366f1;
+  color: #fff;
+  font-weight: 600;
+}
+.imp-mode-btn.active.woe {
+  background: #10b981;
+  border-color: #10b981;
+}
+.imp-mode-hint {
+  font-size: .73rem;
+  color: #9ca3af;
+  flex: 1;
+}
+
+/* ── Ligne et select WOE ── */
+.imp-review-row.row-woe {
+  background: #f0fdf4;
+  border-color: #bbf7d0;
+}
+.select-woe {
+  border-color: #10b981 !important;
+  color: #065f46;
+  background: #f0fdf4;
 }
 
 /* ── Boutons d'action imputation done ── */

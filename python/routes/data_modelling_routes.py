@@ -13,7 +13,9 @@ def _safe_records(df: pd.DataFrame, n: int = 10) -> list:
     for rec in df.head(n).to_dict('records'):
         safe = {}
         for k, v in rec.items():
-            if isinstance(v, float) and (np.isnan(v) or np.isinf(v)):
+            if v is None or (isinstance(v, float) and (np.isnan(v) or np.isinf(v))):
+                safe[k] = None
+            elif pd.isnull(v):
                 safe[k] = None
             elif isinstance(v, (np.integer,)):
                 safe[k] = int(v)

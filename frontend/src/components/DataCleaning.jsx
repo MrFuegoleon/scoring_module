@@ -589,25 +589,31 @@ function DataVerificationPanel({ data, onClose }) {
 }
 
 // ── Options d'imputation par catégorie de type ────────────────────────────────
+const WOE_OPTION    = { value: 'woe',        label: '⬡ Laisser · WOE' }
+const DROP_OPTIONS  = [
+  { value: 'drop_rows',   label: 'Supprimer les lignes' },
+  { value: 'drop_column', label: 'Supprimer la colonne' },
+]
+
 const IMPUTATION_OPTIONS = {
   numeric: [
-    { value: 'median',      label: 'Médiane' },
-    { value: 'mean',        label: 'Moyenne' },
-    { value: 'constant',    label: 'Constante (-999)' },
-    { value: 'drop_rows',   label: 'Supprimer les lignes' },
-    { value: 'drop_column', label: 'Supprimer la colonne' },
+    { value: 'median',   label: 'Médiane' },
+    { value: 'mean',     label: 'Moyenne' },
+    { value: 'constant', label: 'Constante (-999)' },
+    ...DROP_OPTIONS,
+    WOE_OPTION,
   ],
   categorical: [
-    { value: 'mode',        label: 'Mode (valeur fréquente)' },
-    { value: 'constant',    label: 'Constante ("unknown")' },
-    { value: 'drop_rows',   label: 'Supprimer les lignes' },
-    { value: 'drop_column', label: 'Supprimer la colonne' },
+    { value: 'mode',     label: 'Mode (valeur fréquente)' },
+    { value: 'constant', label: 'Constante ("unknown")' },
+    ...DROP_OPTIONS,
+    WOE_OPTION,
   ],
   datetime: [
-    { value: 'ffill',       label: 'Propagation avant (ffill)' },
-    { value: 'bfill',       label: 'Propagation arrière (bfill)' },
-    { value: 'drop_rows',   label: 'Supprimer les lignes' },
-    { value: 'drop_column', label: 'Supprimer la colonne' },
+    { value: 'ffill',    label: 'Propagation avant (ffill)' },
+    { value: 'bfill',    label: 'Propagation arrière (bfill)' },
+    ...DROP_OPTIONS,
+    WOE_OPTION,
   ],
 }
 
@@ -628,36 +634,38 @@ const STRATEGY_LABELS = {
   bfill:       'bfill',
   drop_rows:   'Lignes supprimées',
   drop_column: 'Colonne supprimée',
+  woe:         'Laisser · WOE',
   ignored:     'Ignoré',
 }
 
-// ── Section imputation dans le modal ─────────────────────────────────────────
+// ── Section gestion des valeurs manquantes dans le modal ──────────────────────
 function ImputationReviewSection({ missingReport, userStrategies, onStrategyChange,
-                                    createIndicators, onToggleIndicators }) {
+                                    imputMode, onModeChange }) {
   if (!missingReport) return null
   const entries = Object.entries(missingReport)
+
   if (entries.length === 0) {
     return (
       <div className="modal-section">
         <div className="modal-section-header">
-          <h3>🩹 Imputation des valeurs manquantes</h3>
+          <h3>🩹 Gestion des valeurs manquantes</h3>
           <span className="rsummary-chip rsummary-ok">✓ Aucune valeur manquante</span>
         </div>
         <div className="outlier-hero outlier-hero-ok">
           <span className="outlier-hero-icon">✓</span>
-          <div><div className="outlier-hero-title">Dataset complet — aucune imputation nécessaire</div></div>
+          <div><div className="outlier-hero-title">Dataset complet — aucune action nécessaire</div></div>
         </div>
       </div>
     )
   }
 
   const totalMiss = entries.reduce((s, [, r]) => s + r.missing_count, 0)
-  const nDropRows = entries.filter(([col]) => userStrategies[col] === 'drop_rows').length
+  const nWoe      = entries.filter(([col]) => userStrategies[col] === 'woe').length
 
   return (
     <div className="modal-section">
       <div className="modal-section-header">
-        <h3>🩹 Imputation des valeurs manquantes</h3>
+        <h3>🩹 Gestion des valeurs manquantes</h3>
         <div className="modal-section-chips">
           <span className="rsummary-chip rsummary-mod">
             ⚠ {entries.length} colonne{entries.length > 1 ? 's' : ''} · {totalMiss} valeur{totalMiss > 1 ? 's' : ''} manquante{totalMiss > 1 ? 's' : ''}
@@ -665,34 +673,29 @@ function ImputationReviewSection({ missingReport, userStrategies, onStrategyChan
         </div>
       </div>
 
-      {/* Checkbox indicateurs */}
-      <label className="imp-indicators-toggle">
-        <input
-          type="checkbox"
-          checked={createIndicators}
-          onChange={e => onToggleIndicators(e.target.checked)}
-        />
-        <div>
-          <span className="imp-indic-toggle-title">
-            📌 Créer des indicateurs de valeurs manquantes
-          </span>
-          <span className="imp-indic-toggle-sub">
-            Ajoute une colonne <code>col_missing</code> (0/1) pour chaque colonne imputée —
-            utile pour capturer le signal "absence" en WOE lors de la modélisation
-          </span>
+      {/* Toggle mode */}
+      <div className="imp-mode-toggle">
+        <span className="imp-mode-label">Mode :</span>
+        <div className="imp-mode-buttons">
+          <button
+            className={`imp-mode-btn ${imputMode === 'imputation' ? 'active' : ''}`}
+            onClick={() => onModeChange('imputation')}
+          >
+            Imputation
+          </button>
+          <button
+            className={`imp-mode-btn ${imputMode === 'woe' ? 'active woe' : ''}`}
+            onClick={() => onModeChange('woe')}
+          >
+            ⬡ Passer au WOE
+          </button>
         </div>
-      </label>
-
-      {nDropRows > 0 && (
-        <div className="imp-drop-warn">
-          <span>⚠</span>
-          <span>
-            <strong>{nDropRows} colonne{nDropRows > 1 ? 's' : ''} en suppression de lignes</strong> —
-            l'indicateur ne sera pas créé pour ces colonnes car les lignes disparaissent.
-            Si l'absence est informative, préfère <em>médiane</em>, <em>mode</em> ou <em>constante</em>.
-          </span>
-        </div>
-      )}
+        <span className="imp-mode-hint">
+          {imputMode === 'woe'
+            ? 'Pré-remplit toutes les colonnes sur "Laisser · WOE" — modifiable par colonne'
+            : 'Pré-remplit avec la stratégie suggérée — modifiable par colonne'}
+        </span>
+      </div>
 
       <div className="imp-review-table">
         <div className="imp-review-head">
@@ -707,12 +710,13 @@ function ImputationReviewSection({ missingReport, userStrategies, onStrategyChan
             const typeCategory = getColTypeCategory(r.dtype)
             const options      = IMPUTATION_OPTIONS[typeCategory]
             const selected     = userStrategies[col] ?? r.proposed_strategy
-            const isModified   = selected !== r.proposed_strategy
+            const isWoe        = selected === 'woe'
             const isDanger     = selected === 'drop_column' || selected === 'drop_rows'
+            const isModified   = selected !== r.proposed_strategy && !isWoe
             const pctColor     = r.missing_pct > 60 ? '#ef4444' : r.missing_pct > 30 ? '#f59e0b' : '#10b981'
 
             return (
-              <div key={col} className={`imp-review-row ${isModified ? 'row-modified' : ''}`}>
+              <div key={col} className={`imp-review-row ${isWoe ? 'row-woe' : isModified ? 'row-modified' : ''}`}>
                 <span className="impcol-name" title={col}>
                   {isModified && <span className="modified-dot" />}
                   {col}
@@ -721,7 +725,7 @@ function ImputationReviewSection({ missingReport, userStrategies, onStrategyChan
                 <span className="impcol-count">{r.missing_count}</span>
                 <span className="impcol-pct" style={{ color: pctColor }}>{r.missing_pct}%</span>
                 <select
-                  className={`type-select ${isModified ? 'select-modified' : ''} ${isDanger ? 'select-danger' : ''}`}
+                  className={`type-select ${isWoe ? 'select-woe' : isModified ? 'select-modified' : ''} ${isDanger ? 'select-danger' : ''}`}
                   value={selected}
                   onChange={e => onStrategyChange(col, e.target.value)}
                 >
@@ -835,6 +839,7 @@ export default function DataCleaning({ activeFile, setCleaningSession }) {
   const [userImputStrategies,  setUserImputStrategies] = useState({})
   const [imputationResult,    setImputationResult]    = useState(null)
   const [createIndicators,    setCreateIndicators]    = useState(true)
+  const [imputMode,           setImputMode]           = useState('imputation')
 
   // Vérification post-pipeline
   const [verificationData,  setVerificationData]  = useState(null)
@@ -854,6 +859,7 @@ export default function DataCleaning({ activeFile, setCleaningSession }) {
     setImpPhase(null)
     setMissingReport(null); setUserImputStrategies({}); setImputationResult(null)
     setCreateIndicators(true)
+    setImputMode('imputation')
     setVerificationData(null); setShowVerification(false)
     setActiveTab('types')
     setLogs([])
@@ -971,6 +977,7 @@ export default function DataCleaning({ activeFile, setCleaningSession }) {
   async function launchImputation() {
     if (!sessionId || impPhase === 'detecting' || impPhase === 'applying') return
     setImpPhase('detecting')
+    setImputMode('imputation')
     setMissingReport(null); setUserImputStrategies({}); setImputationResult(null)
     addLog('imputation', 'running', 'Analyse des valeurs manquantes…')
 
@@ -1002,6 +1009,17 @@ export default function DataCleaning({ activeFile, setCleaningSession }) {
     }
   }
 
+  // ── Changement de mode global (imputation / WOE) ────────────────────────
+  function handleModeChange(mode) {
+    setImputMode(mode)
+    if (!missingReport) return
+    const reset = {}
+    Object.entries(missingReport).forEach(([col, r]) => {
+      reset[col] = mode === 'woe' ? 'woe' : r.proposed_strategy
+    })
+    setUserImputStrategies(reset)
+  }
+
   // ── ÉTAPE 4 : Confirmation de l'imputation → application ─────────────────
   async function confirmImputation() {
     if (!sessionId) return
@@ -1031,14 +1049,6 @@ export default function DataCleaning({ activeFile, setCleaningSession }) {
       addLog('imputation', 'error', `Application échouée : ${e.message}`)
       setImpPhase('modal')
     }
-  }
-
-  // ── ÉTAPE 4b : Passer l'imputation ──────────────────────────────────────
-  function skipImputation() {
-    setImputationResult(null)
-    setImpPhase('skipped')
-    addLog('imputation', 'success', 'Imputation ignorée — NaN conservés pour encodage WOE')
-    addLog('pipeline', 'success', '✓ Pipeline complet 4/4 — dataset prêt (NaN conservés)')
   }
 
   // ── ÉTAPE 5 : Chargement du panneau de vérification ─────────────────────
@@ -1081,17 +1091,15 @@ export default function DataCleaning({ activeFile, setCleaningSession }) {
     applying: 'done', done: 'done',
   }[pipelineState]]
 
-  const progressPct = (impPhase === 'done' || impPhase === 'skipped') ? 100
+  const progressPct = impPhase === 'done' ? 100
     : pipelineState === 'done' ? 75
     : 0
   const progressLabel = impPhase === 'done'    ? 'Pipeline complet ✓'
-    : impPhase === 'skipped'                   ? 'Pipeline complet ✓ · NaN conservés (WOE)'
-    : pipelineState === 'done'                 ? '3 / 4 étapes · Imputation à venir'
+    : pipelineState === 'done'                 ? '3 / 4 étapes · Gestion des valeurs manquantes à venir'
     : ''
 
   const impBadge = CARD_BADGE[
     impPhase === 'done'       ? 'done'
-    : impPhase === 'skipped'  ? 'done'
     : impPhase === 'applying' ? 'applying'
     : impPhase === 'modal'    ? 'pending'
     : impPhase === 'detecting'? 'running'
@@ -1240,10 +1248,10 @@ export default function DataCleaning({ activeFile, setCleaningSession }) {
           <div className="imp-card-row">
             <div
               className={`task-card imp-card
-                ${(impPhase === 'done' || impPhase === 'skipped')     ? 'card-done'    : ''}
-                ${impPhase === 'detecting' || impPhase === 'applying' ? 'card-running' : ''}
-                ${impPhase === 'modal'                                ? 'card-pending' : ''}
-                ${!impPhase                                           ? 'card-locked'  : ''}`}
+                ${impPhase === 'done'                                  ? 'card-done'    : ''}
+                ${impPhase === 'detecting' || impPhase === 'applying'  ? 'card-running' : ''}
+                ${impPhase === 'modal'                                 ? 'card-pending' : ''}
+                ${!impPhase                                            ? 'card-locked'  : ''}`}
               style={{ '--tc': '#10b981' }}
             >
               <div className="task-card-top">
@@ -1254,21 +1262,19 @@ export default function DataCleaning({ activeFile, setCleaningSession }) {
                 </span>
               </div>
               <div className="task-card-body">
-                <h3 className="task-title">Imputation des valeurs manquantes</h3>
+                <h3 className="task-title">Gestion des valeurs manquantes</h3>
                 <p className="task-desc">
-                  Détection par colonne · stratégie personnalisée · médiane / mode / constante / suppression
+                  Choix par colonne · imputation ou conservation pour encodage WOE
                 </p>
                 {impPhase === 'modal' && (
-                  <p className="task-hint">💡 Le modal d'imputation est ouvert — confirmez les stratégies.</p>
+                  <p className="task-hint">💡 Le modal est ouvert — définissez la stratégie par colonne.</p>
                 )}
               </div>
               <div className="task-card-footer">
-                {(impPhase === 'done' || impPhase === 'skipped')
+                {impPhase === 'done'
                   ? (
                     <div className="imp-done-actions">
-                      {impPhase === 'done' && (
-                        <button className="btn-view" onClick={() => goToTab('imputation')}>👁 Voir les résultats</button>
-                      )}
+                      <button className="btn-view" onClick={() => goToTab('imputation')}>👁 Voir les résultats</button>
                       <button
                         className="btn-run"
                         style={{ '--btn-c': '#6366f1' }}
@@ -1277,23 +1283,14 @@ export default function DataCleaning({ activeFile, setCleaningSession }) {
                     </div>
                   )
                   : !impPhase && (
-                    <div className="imp-launch-actions">
-                      <button
-                        className="btn-run"
-                        style={{ '--btn-c': '#10b981' }}
-                        onClick={launchImputation}
-                        disabled={impPhase === 'detecting'}
-                      >
-                        Lancer l'imputation
-                      </button>
-                      <button
-                        className="btn-skip-imputation"
-                        onClick={skipImputation}
-                        title="Conserve les NaN — ils seront encodés comme bin manquant lors du WOE"
-                      >
-                        Passer · WOE
-                      </button>
-                    </div>
+                    <button
+                      className="btn-run"
+                      style={{ '--btn-c': '#10b981' }}
+                      onClick={launchImputation}
+                      disabled={impPhase === 'detecting'}
+                    >
+                      Gérer les valeurs manquantes
+                    </button>
                   )
                 }
               </div>
@@ -1447,9 +1444,9 @@ export default function DataCleaning({ activeFile, setCleaningSession }) {
 
             <div className="modal-header">
               <div>
-                <h2 className="modal-title">🩹 Imputation des valeurs manquantes</h2>
+                <h2 className="modal-title">🩹 Gestion des valeurs manquantes</h2>
                 <p className="modal-subtitle">
-                  Vérifiez la stratégie proposée par colonne, ajustez si besoin, puis confirmez.
+                  Choisissez le mode global, ajustez colonne par colonne, puis confirmez.
                 </p>
               </div>
               <button className="modal-close-btn" onClick={() => setImpPhase(null)} title="Annuler">✕</button>
@@ -1462,8 +1459,8 @@ export default function DataCleaning({ activeFile, setCleaningSession }) {
                 onStrategyChange={(col, strat) =>
                   setUserImputStrategies(prev => ({ ...prev, [col]: strat }))
                 }
-                createIndicators={createIndicators}
-                onToggleIndicators={setCreateIndicators}
+                imputMode={imputMode}
+                onModeChange={handleModeChange}
               />
             </div>
 
