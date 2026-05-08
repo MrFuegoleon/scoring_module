@@ -5,9 +5,9 @@ import warnings
 
 # Valeurs textuelles considérées comme nulles
 _NULL_LIKE = {
-    '', 'null', 'nan', 'NAN', 'none', 'None', 'NULL',
-    'NA', 'N/A', '#N/A', 'n/a', 'NaT', 'nat', 'missing',
-    'unknown', 'unk', 'undefined', '?', 'nd', 'n.d.',
+    '', 'null', 'nan', 'NaN', 'NAN', 'none', 'None', 'NONE', 'NULL',
+    'na', 'NA', 'N/A', '#N/A', 'n/a', 'N.A.', 'NaT', 'nat', 'missing',
+    'unknown', 'unk', 'undefined', '?', 'nd', 'n.d.', '-', '—', '--',
 }
 
 # Mots-clés dans le nom de colonne → candidat ID/Code (pas de conversion numérique)

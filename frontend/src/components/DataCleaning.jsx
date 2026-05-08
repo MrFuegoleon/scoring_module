@@ -527,6 +527,7 @@ function DataVerificationPanel({ data, onClose }) {
             <span>Colonne</span>
             <span>Type final</span>
             <span>Taux de remplissage</span>
+            <span>Valeurs fréquentes</span>
           </div>
           <div className="verif-col-body">
             {colEntries.map(([col, p]) => {
@@ -546,6 +547,19 @@ function DataVerificationPanel({ data, onClose }) {
                       <div className="conf-bar-fill" style={{ width: `${p.fill_rate}%`, background: fillColor }} />
                     </div>
                     <span className="conf-pct" style={{ color: fillColor }}>{p.fill_rate}%</span>
+                  </div>
+                  <div className="vcol-top-vals">
+                    {p.top_values
+                      ? p.top_values.map(({ value, count }) => (
+                          <span key={value} className="vcol-top-chip" title={`${count} occurrences`}>
+                            {value === '' ? <em>vide</em> : value}
+                            <span className="vcol-top-count">{count}</span>
+                          </span>
+                        ))
+                      : p.min != null
+                        ? <span className="vcol-range">min {p.min} · max {p.max}</span>
+                        : null
+                    }
                   </div>
                 </div>
               )
@@ -588,219 +602,277 @@ function DataVerificationPanel({ data, onClose }) {
   )
 }
 
-// ── Options d'imputation par catégorie de type ────────────────────────────────
-const WOE_OPTION    = { value: 'woe',        label: '⬡ Laisser · WOE' }
-const DROP_OPTIONS  = [
-  { value: 'drop_rows',   label: 'Supprimer les lignes' },
-  { value: 'drop_column', label: 'Supprimer la colonne' },
-]
-
-const IMPUTATION_OPTIONS = {
-  numeric: [
-    { value: 'median',   label: 'Médiane' },
-    { value: 'mean',     label: 'Moyenne' },
-    { value: 'constant', label: 'Constante (-999)' },
-    ...DROP_OPTIONS,
-    WOE_OPTION,
-  ],
-  categorical: [
-    { value: 'mode',     label: 'Mode (valeur fréquente)' },
-    { value: 'constant', label: 'Constante ("unknown")' },
-    ...DROP_OPTIONS,
-    WOE_OPTION,
-  ],
-  datetime: [
-    { value: 'ffill',    label: 'Propagation avant (ffill)' },
-    { value: 'bfill',    label: 'Propagation arrière (bfill)' },
-    ...DROP_OPTIONS,
-    WOE_OPTION,
-  ],
-}
-
-const getColTypeCategory = (dtype) => {
-  if (!dtype) return 'categorical'
-  const t = dtype.toLowerCase()
-  if (t.includes('datetime')) return 'datetime'
-  if (/int|float|uint/.test(t)) return 'numeric'
-  return 'categorical'
-}
-
-const STRATEGY_LABELS = {
-  median:      'Médiane',
-  mean:        'Moyenne',
-  constant:    'Constante',
-  mode:        'Mode',
-  ffill:       'ffill',
-  bfill:       'bfill',
-  drop_rows:   'Lignes supprimées',
-  drop_column: 'Colonne supprimée',
-  woe:         'Laisser · WOE',
-  ignored:     'Ignoré',
-}
-
-// ── Section gestion des valeurs manquantes dans le modal ──────────────────────
-function ImputationReviewSection({ missingReport, userStrategies, onStrategyChange,
-                                    imputMode, onModeChange }) {
-  if (!missingReport) return null
-  const entries = Object.entries(missingReport)
-
-  if (entries.length === 0) {
-    return (
-      <div className="modal-section">
-        <div className="modal-section-header">
-          <h3>🩹 Gestion des valeurs manquantes</h3>
-          <span className="rsummary-chip rsummary-ok">✓ Aucune valeur manquante</span>
-        </div>
-        <div className="outlier-hero outlier-hero-ok">
-          <span className="outlier-hero-icon">✓</span>
-          <div><div className="outlier-hero-title">Dataset complet — aucune action nécessaire</div></div>
-        </div>
-      </div>
-    )
-  }
-
-  const totalMiss = entries.reduce((s, [, r]) => s + r.missing_count, 0)
-  const nWoe      = entries.filter(([col]) => userStrategies[col] === 'woe').length
-
+// ── Pipeline Builder — sélection cible + config ───────────────────────────────
+function PipelineBuilderSection({ targetCandidates, selectedTarget, onSelectTarget,
+                                   cardinality, onCardinalityChange,
+                                   nBins, onNBinsChange,
+                                   allColumns, excludedCols, onToggleExclude }) {
   return (
     <div className="modal-section">
       <div className="modal-section-header">
-        <h3>🩹 Gestion des valeurs manquantes</h3>
+        <h3>🎯 Variable cible</h3>
         <div className="modal-section-chips">
-          <span className="rsummary-chip rsummary-mod">
-            ⚠ {entries.length} colonne{entries.length > 1 ? 's' : ''} · {totalMiss} valeur{totalMiss > 1 ? 's' : ''} manquante{totalMiss > 1 ? 's' : ''}
-          </span>
+          {targetCandidates.length === 0
+            ? <span className="rsummary-chip rsummary-mod">⚠ Aucune colonne binaire détectée</span>
+            : <span className="rsummary-chip rsummary-info">{targetCandidates.length} candidat{targetCandidates.length > 1 ? 's' : ''} détecté{targetCandidates.length > 1 ? 's' : ''}</span>
+          }
         </div>
       </div>
 
-      {/* Toggle mode */}
-      <div className="imp-mode-toggle">
-        <span className="imp-mode-label">Mode :</span>
-        <div className="imp-mode-buttons">
-          <button
-            className={`imp-mode-btn ${imputMode === 'imputation' ? 'active' : ''}`}
-            onClick={() => onModeChange('imputation')}
-          >
-            Imputation
-          </button>
-          <button
-            className={`imp-mode-btn ${imputMode === 'woe' ? 'active woe' : ''}`}
-            onClick={() => onModeChange('woe')}
-          >
-            ⬡ Passer au WOE
-          </button>
-        </div>
-        <span className="imp-mode-hint">
-          {imputMode === 'woe'
-            ? 'Pré-remplit toutes les colonnes sur "Laisser · WOE" — modifiable par colonne'
-            : 'Pré-remplit avec la stratégie suggérée — modifiable par colonne'}
-        </span>
-      </div>
-
-      <div className="imp-review-table">
-        <div className="imp-review-head">
-          <span>Colonne</span>
-          <span>Type</span>
-          <span>Manquants</span>
-          <span>%</span>
-          <span>Stratégie</span>
-        </div>
-        <div className="imp-review-body">
-          {entries.map(([col, r]) => {
-            const typeCategory = getColTypeCategory(r.dtype)
-            const options      = IMPUTATION_OPTIONS[typeCategory]
-            const selected     = userStrategies[col] ?? r.proposed_strategy
-            const isWoe        = selected === 'woe'
-            const isDanger     = selected === 'drop_column' || selected === 'drop_rows'
-            const isModified   = selected !== r.proposed_strategy && !isWoe
-            const pctColor     = r.missing_pct > 60 ? '#ef4444' : r.missing_pct > 30 ? '#f59e0b' : '#10b981'
-
+      {targetCandidates.length > 0 && (
+        <div className="pb-target-grid">
+          {targetCandidates.map(c => {
+            const sel = selectedTarget === c.column
+            const pctVal = (c.event_rate * 100).toFixed(1)
+            const balanced = c.balance < 0.15
             return (
-              <div key={col} className={`imp-review-row ${isWoe ? 'row-woe' : isModified ? 'row-modified' : ''}`}>
-                <span className="impcol-name" title={col}>
-                  {isModified && <span className="modified-dot" />}
-                  {col}
-                </span>
-                <code className="impcol-dtype">{r.dtype}</code>
-                <span className="impcol-count">{r.missing_count}</span>
-                <span className="impcol-pct" style={{ color: pctColor }}>{r.missing_pct}%</span>
-                <select
-                  className={`type-select ${isWoe ? 'select-woe' : isModified ? 'select-modified' : ''} ${isDanger ? 'select-danger' : ''}`}
-                  value={selected}
-                  onChange={e => onStrategyChange(col, e.target.value)}
-                >
-                  {options.map(opt => (
-                    <option key={opt.value} value={opt.value}>{opt.label}</option>
-                  ))}
-                </select>
+              <div
+                key={c.column}
+                className={`pb-target-card ${sel ? 'pb-target-card-sel' : ''}`}
+                onClick={() => onSelectTarget(c.column)}
+              >
+                <div className="pb-target-top">
+                  <span className="pb-target-name">{c.column}</span>
+                  {sel && <span className="pb-target-dot" />}
+                </div>
+                <div className="pb-target-vals">
+                  {c.values.map(v => <span key={v} className="pb-target-val">{v}</span>)}
+                </div>
+                <div className="pb-target-bar-wrap">
+                  <div className="pb-target-bar" style={{ width: `${pctVal}%` }} />
+                </div>
+                <div className="pb-target-meta">
+                  <span>Taux événement : <strong>{pctVal}%</strong></span>
+                  <span className={`pb-balance-tag ${balanced ? 'balanced' : 'unbalanced'}`}>
+                    {balanced ? 'Équilibré' : 'Déséquilibré'}
+                  </span>
+                </div>
+                {c.n_missing > 0 && (
+                  <div className="pb-target-warn">⚠ {c.n_missing} valeur{c.n_missing > 1 ? 's' : ''} manquante{c.n_missing > 1 ? 's' : ''}</div>
+                )}
               </div>
             )
           })}
         </div>
+      )}
+
+      <div className="modal-section-header" style={{ marginTop: '1.5rem' }}>
+        <h3>⚙️ Configuration des pipelines</h3>
       </div>
+
+      <div className="pb-config-grid">
+        <div className="pb-config-block">
+          <label className="pb-config-label">
+            Seuil de cardinalité (Pipeline tree)
+            <span className="pb-config-hint">≤ seuil → OHE · &gt; seuil → Target Encoding</span>
+          </label>
+          <div className="pb-bins-row">
+            {[5, 10, 15, 20, 30].map(v => (
+              <button
+                key={v}
+                className={`pb-bins-btn ${cardinality === v ? 'active' : ''}`}
+                onClick={() => onCardinalityChange(v)}
+              >{v}</button>
+            ))}
+          </div>
+        </div>
+
+        <div className="pb-config-block">
+          <label className="pb-config-label">
+            Bins WOE (Pipeline logit)
+            <span className="pb-config-hint">Nombre de bins pour les variables continues</span>
+          </label>
+          <div className="pb-bins-row">
+            {[5, 10, 15, 20].map(v => (
+              <button
+                key={v}
+                className={`pb-bins-btn ${nBins === v ? 'active' : ''}`}
+                onClick={() => onNBinsChange(v)}
+              >{v}</button>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      {/* ── Colonnes à exclure ── */}
+      {allColumns && allColumns.length > 0 && (
+        <>
+          <div className="modal-section-header" style={{ marginTop: '1.5rem' }}>
+            <h3>🗑 Colonnes à exclure</h3>
+            <div className="modal-section-chips">
+              {excludedCols.size > 0 && (
+                <span className="rsummary-chip rsummary-mod">
+                  {excludedCols.size} exclue{excludedCols.size > 1 ? 's' : ''}
+                </span>
+              )}
+            </div>
+          </div>
+          <p className="pb-excl-hint">
+            Les colonnes cochées seront retirées des deux datamarts avant l'encodage.
+            Les colonnes de type ID/Code sont pré-sélectionnées.
+          </p>
+          <div className="pb-excl-grid">
+            {allColumns.filter(c => c.col !== selectedTarget).map(({ col, dtype, suggested }) => {
+              const checked = excludedCols.has(col)
+              return (
+                <label
+                  key={col}
+                  className={`pb-excl-row ${checked ? 'pb-excl-checked' : ''} ${suggested ? 'pb-excl-suggested' : ''}`}
+                >
+                  <input
+                    type="checkbox"
+                    checked={checked}
+                    onChange={() => onToggleExclude(col)}
+                  />
+                  <span className="pb-excl-name" title={col}>{col}</span>
+                  <code className="pb-excl-dtype">{dtype}</code>
+                  {suggested && <span className="pb-excl-tag">ID suggéré</span>}
+                </label>
+              )
+            })}
+          </div>
+        </>
+      )}
     </div>
   )
 }
 
-// ── Résultats : imputation ────────────────────────────────────────────────────
-function ResultImputation({ report }) {
-  if (!report) return null
-  const meta    = report._meta ?? {}
-  const entries = Object.entries(report).filter(([k]) => k !== '_meta')
+// ── Mini preview table ────────────────────────────────────────────────────────
+function PipelinePreviewTable({ rows, columns, accentColor }) {
+  const [open, setOpen] = useState(false)
+  if (!rows || rows.length === 0) return null
+  const cols = columns ?? Object.keys(rows[0])
 
-  const nImputed    = meta.cols_imputed        ?? 0
-  const nDropCols   = meta.cols_dropped        ?? 0
-  const nDropRows   = meta.rows_dropped        ?? 0
-  const rowsAfter   = meta.rows_after          ?? '—'
-  const colsAfter   = meta.cols_after          ?? '—'
-  const indicators  = meta.indicators_created  ?? []
+  return (
+    <div className="pb-preview-wrap">
+      <button
+        className="pb-preview-toggle"
+        style={{ color: accentColor }}
+        onClick={() => setOpen(o => !o)}
+      >
+        {open ? '▲' : '▼'} Aperçu ({rows.length} lignes)
+      </button>
+      {open && (
+        <div className="pb-preview-scroll">
+          <table className="pb-preview-table">
+            <thead>
+              <tr>
+                {cols.map(c => <th key={c} title={c}>{c.length > 14 ? c.slice(0, 13) + '…' : c}</th>)}
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((row, i) => (
+                <tr key={i}>
+                  {cols.map(c => {
+                    const v = row[c]
+                    const isNull = v === null || v === undefined
+                    const isNum  = typeof v === 'number'
+                    return (
+                      <td key={c} className={isNull ? 'pb-cell-null' : ''}>
+                        {isNull
+                          ? <span className="pb-null-tag">NaN</span>
+                          : isNum
+                            ? <span className="pb-num-val">{Number(v).toFixed(3)}</span>
+                            : String(v).length > 12 ? String(v).slice(0, 11) + '…' : String(v)
+                        }
+                      </td>
+                    )
+                  })}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ── Résultats des pipelines ───────────────────────────────────────────────────
+function ResultPipelines({ result, sessionId }) {
+  if (!result) return null
+  const { logit_summary: ls, tree_summary: ts, target_col,
+          logit_preview, tree_preview } = result
+
+  const downloadUrl = (type) =>
+    `/api/data-cleaning/pipeline/download/${type}?session_id=${sessionId}`
 
   return (
     <div className="result-content">
       <HeroBanner
         icon="✓"
         variant="success"
-        title={`Imputation terminée — dataset prêt pour la modélisation`}
-        sub={`${nImputed} colonne${nImputed > 1 ? 's' : ''} imputée${nImputed > 1 ? 's' : ''} · ${nDropCols} supprimée${nDropCols > 1 ? 's' : ''} · ${nDropRows} ligne${nDropRows > 1 ? 's' : ''} retirée${nDropRows > 1 ? 's' : ''}`}
+        title={`2 datamarts construits — cible : ${target_col}`}
+        sub="Prêts pour l'entraînement en Data Modelling"
       />
-      <div className="result-stats-row">
-        <StatChip value={nImputed}          label="colonnes imputées"   color="#10b981" />
-        <StatChip value={nDropCols}         label="colonnes supprimées" color="#ef4444" />
-        <StatChip value={nDropRows}         label="lignes retirées"     color="#f59e0b" />
-        <StatChip value={rowsAfter}         label="lignes finales"      color="#6366f1" />
-        <StatChip value={colsAfter}         label="colonnes finales"    color="#6366f1" />
-        {indicators.length > 0 && (
-          <StatChip value={indicators.length} label="indicateurs créés" color="#8b5cf6" />
-        )}
-      </div>
-      {indicators.length > 0 && (
-        <div className="imp-indicators-result">
-          <span className="imp-indic-label">📌 Colonnes indicatrices ajoutées :</span>
-          <div className="imp-indic-chips">
-            {indicators.map(name => (
-              <span key={name} className="imp-indic-chip">{name}</span>
-            ))}
-          </div>
-        </div>
-      )}
-      {entries.length > 0 && (
-        <div className="result-list">
-          {entries.map(([col, r]) => (
-            <div key={col} className="result-list-row">
-              <span className="rlist-name">{col}</span>
-              <div className="rlist-meta">
-                <span className={`rlist-badge ${r.strategy === 'drop_column' || r.strategy === 'drop_rows' ? 'badge-red' : 'badge-green'}`}>
-                  {STRATEGY_LABELS[r.strategy] ?? r.strategy}
-                </span>
-                {'value' in r && (
-                  <span className="rlist-detail">valeur : {r.value}</span>
-                )}
-                <span className="rlist-detail">{r.missing_count} valeur{r.missing_count > 1 ? 's' : ''} traitée{r.missing_count > 1 ? 's' : ''}</span>
-              </div>
+      <div className="pb-results-grid">
+        {/* Pipeline Logit */}
+        <div className="pb-result-card pb-result-logit">
+          <div className="pb-result-header">
+            <span className="pb-result-icon">📈</span>
+            <div>
+              <div className="pb-result-title">Pipeline Logit (WOE)</div>
+              <div className="pb-result-sub">Régression logistique · interprétable</div>
             </div>
-          ))}
+          </div>
+          <div className="pb-result-stats">
+            <StatChip value={ls.n_rows}         label="lignes"          color="#6366f1" />
+            <StatChip value={ls.n_features_woe} label="features WOE"   color="#6366f1" />
+            <StatChip value={ls.n_numeric}      label="numériques"      />
+            <StatChip value={ls.n_categorical}  label="catégorielles"   />
+          </div>
+          {ls.iv_summary && (
+            <div className="pb-iv-row">
+              {Object.entries(ls.iv_summary).filter(([, n]) => n > 0).map(([lbl, n]) => {
+                const colors = { Inutile: '#9ca3af', Faible: '#f59e0b', Moyen: '#3b82f6', Fort: '#10b981', Suspect: '#ef4444' }
+                return (
+                  <span key={lbl} className="pb-iv-chip" style={{ color: colors[lbl], borderColor: colors[lbl] + '44' }}>
+                    {n} {lbl}
+                  </span>
+                )
+              })}
+            </div>
+          )}
+          <PipelinePreviewTable rows={logit_preview} columns={ls.columns} accentColor="#6366f1" />
+          <a className="btn-pb-download" href={downloadUrl('logit')} download>
+            ⬇ Télécharger CSV
+          </a>
         </div>
-      )}
+
+        {/* Pipeline Tree */}
+        <div className="pb-result-card pb-result-tree">
+          <div className="pb-result-header">
+            <span className="pb-result-icon">🌲</span>
+            <div>
+              <div className="pb-result-title">Pipeline Tree-based</div>
+              <div className="pb-result-sub">XGBoost · LightGBM · Random Forest</div>
+            </div>
+          </div>
+          <div className="pb-result-stats">
+            <StatChip value={ts.n_rows}       label="lignes"            color="#10b981" />
+            <StatChip value={ts.n_cols - 1}   label="features"          color="#10b981" />
+            <StatChip value={ts.n_numeric}    label="numériques"        />
+            <StatChip value={ts.n_ohe}        label="OHE"               color="#f59e0b" />
+            <StatChip value={ts.n_target_enc} label="Target Enc."       color="#ef4444" />
+          </div>
+          {ts.ohe_cols?.length > 0 && (
+            <div className="pb-col-chips">
+              <span className="pb-col-chips-label">OHE :</span>
+              {ts.ohe_cols.map(c => <span key={c} className="pb-col-chip ohe">{c}</span>)}
+            </div>
+          )}
+          {ts.te_cols?.length > 0 && (
+            <div className="pb-col-chips">
+              <span className="pb-col-chips-label">Target Enc. :</span>
+              {ts.te_cols.map(c => <span key={c} className="pb-col-chip te">{c}</span>)}
+            </div>
+          )}
+          <PipelinePreviewTable rows={tree_preview} columns={ts.columns} accentColor="#10b981" />
+          <a className="btn-pb-download" href={downloadUrl('tree')} download>
+            ⬇ Télécharger CSV
+          </a>
+        </div>
+      </div>
     </div>
   )
 }
@@ -813,8 +885,8 @@ export default function DataCleaning({ activeFile, setCleaningSession }) {
   // pipelineState : idle | running | modal | applying | done
   const [pipelineState, setPipelineState] = useState('idle')
 
-  // impPhase : null | detecting | modal | applying | done
-  const [impPhase, setImpPhase] = useState(null)
+  // pipPhase : null | modal | building | done
+  const [pipPhase, setPipPhase] = useState(null)
 
   // Session (remplace le passage du fichier à chaque appel)
   const [sessionId, setSessionId] = useState(null)
@@ -834,12 +906,13 @@ export default function DataCleaning({ activeFile, setCleaningSession }) {
   const [doublonsResult, setDoublonsResult] = useState(null)
   const [outliersResult, setOutliersResult] = useState(null)
 
-  // Imputation
-  const [missingReport,       setMissingReport]       = useState(null)
-  const [userImputStrategies,  setUserImputStrategies] = useState({})
-  const [imputationResult,    setImputationResult]    = useState(null)
-  const [createIndicators,    setCreateIndicators]    = useState(true)
-  const [imputMode,           setImputMode]           = useState('imputation')
+  // Pipeline builder
+  const [targetCandidates,   setTargetCandidates]   = useState([])
+  const [selectedTarget,     setSelectedTarget]     = useState(null)
+  const [cardinalityThresh,  setCardinalityThresh]  = useState(10)
+  const [nBinsPipeline,      setNBinsPipeline]      = useState(10)
+  const [pipelineResult,     setPipelineResult]     = useState(null)
+  const [excludedCols,       setExcludedCols]       = useState(new Set())
 
   // Vérification post-pipeline
   const [verificationData,  setVerificationData]  = useState(null)
@@ -856,10 +929,11 @@ export default function DataCleaning({ activeFile, setCleaningSession }) {
     setDetectData(null); setDoublonsReport(null); setOutliersReport(null)
     setTypesResult(null); setDoublonsResult(null); setOutliersResult(null)
     setUserTypes({}); setUserOutlierStrategy('drop')
-    setImpPhase(null)
-    setMissingReport(null); setUserImputStrategies({}); setImputationResult(null)
-    setCreateIndicators(true)
-    setImputMode('imputation')
+    setPipPhase(null)
+    setTargetCandidates([]); setSelectedTarget(null)
+    setPipelineResult(null)
+    setCardinalityThresh(10); setNBinsPipeline(10)
+    setExcludedCols(new Set())
     setVerificationData(null); setShowVerification(false)
     setActiveTab('types')
     setLogs([])
@@ -889,9 +963,9 @@ export default function DataCleaning({ activeFile, setCleaningSession }) {
     setTypesResult(null); setDoublonsResult(null); setOutliersResult(null)
     setUserTypes({})
     setUserOutlierStrategy('drop')
-    setImpPhase(null)
-    setMissingReport(null); setUserImputStrategies({}); setImputationResult(null)
-    setCreateIndicators(true)
+    setPipPhase(null)
+    setTargetCandidates([]); setSelectedTarget(null)
+    setPipelineResult(null)
     setPipelineState('running')
     addLog('pipeline', 'running', 'Initialisation du pipeline…')
 
@@ -913,10 +987,12 @@ export default function DataCleaning({ activeFile, setCleaningSession }) {
       setDetectData(data)
       setDoublonsReport(data.doublons_report)
       setOutliersReport(data.outliers_report)
+      setTargetCandidates(data.target_candidates ?? [])
 
       const nCols    = Object.keys(data.type_report || {}).length
       const nDbl     = data.doublons_report?.duplicates_found ?? 0
       const nOutCols = Object.keys(data.outliers_report || {}).length
+      const nCands   = (data.target_candidates ?? []).length
 
       const init = {}
       Object.entries(data.type_report || {}).forEach(([col, r]) => { init[col] = r.detected_type })
@@ -925,7 +1001,7 @@ export default function DataCleaning({ activeFile, setCleaningSession }) {
       addLog('types',    'success', `Types analysés — ${nCols} colonnes`)
       addLog('doublons', 'success', `Doublons analysés — ${nDbl} trouvé${nDbl > 1 ? 's' : ''}`)
       addLog('outliers', 'success', `Outliers analysés — ${nOutCols} colonne${nOutCols > 1 ? 's' : ''} affectée${nOutCols > 1 ? 's' : ''}`)
-      addLog('pipeline', 'success', 'Analyses terminées — révision requise')
+      addLog('pipeline', 'success', `Analyses terminées — ${nCands} variable${nCands > 1 ? 's' : ''} cible candidate${nCands > 1 ? 's' : ''} détectée${nCands > 1 ? 's' : ''}`)
       setPipelineState('modal')
 
     } catch (e) {
@@ -962,7 +1038,7 @@ export default function DataCleaning({ activeFile, setCleaningSession }) {
       addLog('types',    'success', `${nTypesOk} colonnes converties`)
       addLog('doublons', 'success', `${nDbl} doublon${nDbl > 1 ? 's' : ''} supprimé${nDbl > 1 ? 's' : ''}`)
       addLog('outliers', 'success', `${nOutCols} colonne${nOutCols > 1 ? 's' : ''} winsorisée${nOutCols > 1 ? 's' : ''}`)
-      addLog('pipeline', 'success', '3/4 étapes terminées — Imputation à venir')
+      addLog('pipeline', 'success', '3/4 étapes terminées — Construction des pipelines à venir')
 
       setPipelineState('done')
       setActiveTab('types')
@@ -973,81 +1049,69 @@ export default function DataCleaning({ activeFile, setCleaningSession }) {
     }
   }
 
-  // ── ÉTAPE 3 : Lancement de la détection des valeurs manquantes ──────────
-  async function launchImputation() {
-    if (!sessionId || impPhase === 'detecting' || impPhase === 'applying') return
-    setImpPhase('detecting')
-    setImputMode('imputation')
-    setMissingReport(null); setUserImputStrategies({}); setImputationResult(null)
-    addLog('imputation', 'running', 'Analyse des valeurs manquantes…')
-
-    const fd = new FormData()
-    fd.append('session_id', sessionId)
-
-    try {
-      const res  = await fetch('/api/data-cleaning/missing/detect', { method: 'POST', body: fd })
-      const data = await res.json()
-      if (!res.ok || !data.success) throw new Error(data.error || `Erreur HTTP ${res.status}`)
-
-      const nCols = data.total_missing_cols ?? 0
-      const nVals = data.total_missing_vals ?? 0
-
-      // Initialiser les stratégies avec les propositions du backend
-      const initStrat = {}
-      Object.entries(data.missing_report || {}).forEach(([col, r]) => {
-        initStrat[col] = r.proposed_strategy
-      })
-      setMissingReport(data.missing_report)
-      setUserImputStrategies(initStrat)
-
-      addLog('imputation', 'success', `${nCols} colonne${nCols > 1 ? 's' : ''} avec ${nVals} valeur${nVals > 1 ? 's' : ''} manquante${nVals > 1 ? 's' : ''}`)
-      setImpPhase('modal')
-
-    } catch (e) {
-      addLog('imputation', 'error', `Détection échouée : ${e.message}`)
-      setImpPhase(null)
-    }
-  }
-
-  // ── Changement de mode global (imputation / WOE) ────────────────────────
-  function handleModeChange(mode) {
-    setImputMode(mode)
-    if (!missingReport) return
-    const reset = {}
-    Object.entries(missingReport).forEach(([col, r]) => {
-      reset[col] = mode === 'woe' ? 'woe' : r.proposed_strategy
+  // ── Colonnes disponibles (avec détection ID) ─────────────────────────────
+  const allColumnsForPipeline = (() => {
+    const report = typesResult?.apply_report ?? detectData?.type_report ?? {}
+    return Object.entries(report).map(([col, r]) => {
+      const dtype = r.applied_type ?? r.detected_type ?? ''
+      const suggested = dtype.toLowerCase().includes('id') ||
+                        dtype.toLowerCase().includes('code') ||
+                        col.toLowerCase().includes('id') ||
+                        col.toLowerCase().includes('code') ||
+                        col.toLowerCase().includes('key') ||
+                        col.toLowerCase().includes('num') && dtype === 'object'
+      return { col, dtype, suggested }
     })
-    setUserImputStrategies(reset)
+  })()
+
+  function openPipelineModal() {
+    // Pré-cocher les colonnes suggérées comme ID
+    const suggested = new Set(
+      allColumnsForPipeline.filter(c => c.suggested).map(c => c.col)
+    )
+    setExcludedCols(suggested)
+    setPipPhase('modal')
   }
 
-  // ── ÉTAPE 4 : Confirmation de l'imputation → application ─────────────────
-  async function confirmImputation() {
-    if (!sessionId) return
-    setImpPhase('applying')
-    addLog('imputation', 'running', "Application des stratégies d'imputation…")
+  function toggleExclude(col) {
+    setExcludedCols(prev => {
+      const next = new Set(prev)
+      next.has(col) ? next.delete(col) : next.add(col)
+      return next
+    })
+  }
+
+  // ── ÉTAPE 3 : Construction des deux pipelines ─────────────────────────────
+  async function buildPipelines() {
+    if (!sessionId || !selectedTarget || pipPhase === 'building') return
+    setPipPhase('building')
+    setPipelineResult(null)
+    addLog('pipeline', 'running', `Construction des datamarts (cible : ${selectedTarget})…`)
 
     const fd = new FormData()
-    fd.append('session_id', sessionId)
-    fd.append('confirmed_strategies', JSON.stringify(userImputStrategies))
-    fd.append('create_indicators', String(createIndicators))
+    fd.append('session_id',            sessionId)
+    fd.append('target_col',            selectedTarget)
+    fd.append('n_bins',                String(nBinsPipeline))
+    fd.append('cardinality_threshold', String(cardinalityThresh))
+    fd.append('smoothing',             '0.2')
+    fd.append('excluded_cols', JSON.stringify([...excludedCols]))
 
     try {
-      const res  = await fetch('/api/data-cleaning/missing/apply', { method: 'POST', body: fd })
+      const res  = await fetch('/api/data-cleaning/pipeline/build', { method: 'POST', body: fd })
       const data = await res.json()
       if (!res.ok || !data.success) throw new Error(data.error || `Erreur HTTP ${res.status}`)
 
-      setImputationResult(data.report)
-      const meta = data.report?._meta ?? {}
-      addLog('imputation', 'success',
-        `Imputation terminée — ${meta.cols_imputed ?? 0} imputées · ${meta.cols_dropped ?? 0} supprimées · ${meta.rows_dropped ?? 0} lignes retirées`
+      setPipelineResult(data)
+      addLog('pipeline', 'success',
+        `Datamarts prêts — logit : ${data.logit_summary.n_features_woe} features WOE · tree : ${data.tree_summary.n_cols - 1} features`
       )
-      addLog('pipeline', 'success', '✓ Pipeline complet 4/4 — dataset prêt')
-      setImpPhase('done')
-      setActiveTab('imputation')
+      addLog('pipeline', 'success', '✓ Pipeline complet — datasets prêts pour la modélisation')
+      setPipPhase('done')
+      setActiveTab('pipelines')
 
     } catch (e) {
-      addLog('imputation', 'error', `Application échouée : ${e.message}`)
-      setImpPhase('modal')
+      addLog('pipeline', 'error', `Construction échouée : ${e.message}`)
+      setPipPhase('modal')
     }
   }
 
@@ -1091,18 +1155,17 @@ export default function DataCleaning({ activeFile, setCleaningSession }) {
     applying: 'done', done: 'done',
   }[pipelineState]]
 
-  const progressPct = impPhase === 'done' ? 100
+  const progressPct = pipPhase === 'done' ? 100
     : pipelineState === 'done' ? 75
     : 0
-  const progressLabel = impPhase === 'done'    ? 'Pipeline complet ✓'
-    : pipelineState === 'done'                 ? '3 / 4 étapes · Gestion des valeurs manquantes à venir'
+  const progressLabel = pipPhase === 'done'    ? 'Pipeline complet ✓'
+    : pipelineState === 'done'                 ? '3 / 4 étapes · Construction des pipelines à venir'
     : ''
 
-  const impBadge = CARD_BADGE[
-    impPhase === 'done'       ? 'done'
-    : impPhase === 'applying' ? 'applying'
-    : impPhase === 'modal'    ? 'pending'
-    : impPhase === 'detecting'? 'running'
+  const pipBadge = CARD_BADGE[
+    pipPhase === 'done'     ? 'done'
+    : pipPhase === 'building' ? 'applying'
+    : pipPhase === 'modal'    ? 'pending'
     : 'idle'
   ]
 
@@ -1243,53 +1306,52 @@ export default function DataCleaning({ activeFile, setCleaningSession }) {
           )}
         </div>
 
-        {/* Carte imputation — séparée, pleine largeur */}
+        {/* Carte pipelines — séparée, pleine largeur */}
         {pipelineState === 'done' && (
           <div className="imp-card-row">
             <div
               className={`task-card imp-card
-                ${impPhase === 'done'                                  ? 'card-done'    : ''}
-                ${impPhase === 'detecting' || impPhase === 'applying'  ? 'card-running' : ''}
-                ${impPhase === 'modal'                                 ? 'card-pending' : ''}
-                ${!impPhase                                            ? 'card-locked'  : ''}`}
+                ${pipPhase === 'done'     ? 'card-done'    : ''}
+                ${pipPhase === 'building' ? 'card-running' : ''}
+                ${pipPhase === 'modal'    ? 'card-pending' : ''}
+                ${!pipPhase               ? 'card-locked'  : ''}`}
               style={{ '--tc': '#10b981' }}
             >
               <div className="task-card-top">
-                <div className="task-icon" style={{ background: '#10b98118', color: '#10b981' }}>🩹</div>
-                <span className={`task-badge ${impBadge.cls}`}>
-                  {(impPhase === 'detecting' || impPhase === 'applying') && <span className="badge-spin" />}
-                  {impBadge.label}
+                <div className="task-icon" style={{ background: '#10b98118', color: '#10b981' }}>🔀</div>
+                <span className={`task-badge ${pipBadge.cls}`}>
+                  {pipPhase === 'building' && <span className="badge-spin" />}
+                  {pipBadge.label}
                 </span>
               </div>
               <div className="task-card-body">
-                <h3 className="task-title">Gestion des valeurs manquantes</h3>
+                <h3 className="task-title">Construction des pipelines</h3>
                 <p className="task-desc">
-                  Choix par colonne · imputation ou conservation pour encodage WOE
+                  Pipeline Logit (WOE) · Pipeline Tree-based (OHE + Target Encoding)
                 </p>
-                {impPhase === 'modal' && (
-                  <p className="task-hint">💡 Le modal est ouvert — définissez la stratégie par colonne.</p>
+                {pipPhase === 'modal' && (
+                  <p className="task-hint">💡 Sélectionnez la variable cible et configurez les pipelines.</p>
                 )}
               </div>
               <div className="task-card-footer">
-                {impPhase === 'done'
+                {pipPhase === 'done'
                   ? (
                     <div className="imp-done-actions">
-                      <button className="btn-view" onClick={() => goToTab('imputation')}>👁 Voir les résultats</button>
+                      <button className="btn-view" onClick={() => goToTab('pipelines')}>👁 Voir les résultats</button>
                       <button
                         className="btn-run"
                         style={{ '--btn-c': '#6366f1' }}
                         onClick={loadVerification}
-                      >🔍 Vérifier les données</button>
+                      >🔍 Vérifier le dataset</button>
                     </div>
                   )
-                  : !impPhase && (
+                  : !pipPhase && (
                     <button
                       className="btn-run"
                       style={{ '--btn-c': '#10b981' }}
-                      onClick={launchImputation}
-                      disabled={impPhase === 'detecting'}
+                      onClick={openPipelineModal}
                     >
-                      Gérer les valeurs manquantes
+                      Construire les pipelines
                     </button>
                   )
                 }
@@ -1301,7 +1363,7 @@ export default function DataCleaning({ activeFile, setCleaningSession }) {
       </div>
 
       {/* ── Résultats ── */}
-      {pipelineState === 'done' && (typesResult || doublonsResult || outliersResult || imputationResult) && (
+      {pipelineState === 'done' && (typesResult || doublonsResult || outliersResult || pipelineResult) && (
         <div className="results-panel" ref={resultsPanelRef}>
           <div className="results-panel-header">
             <h2>📊 Résultats du pipeline</h2>
@@ -1327,20 +1389,20 @@ export default function DataCleaning({ activeFile, setCleaningSession }) {
                   onClick={() => setActiveTab('outliers')}
                 >📊 Outliers</button>
               )}
-              {imputationResult && (
+              {pipelineResult && (
                 <button
-                  className={`rtab ${activeTab === 'imputation' ? 'rtab-active' : ''}`}
-                  style={activeTab === 'imputation' ? { '--rtab-c': '#10b981' } : {}}
-                  onClick={() => setActiveTab('imputation')}
-                >🩹 Imputation</button>
+                  className={`rtab ${activeTab === 'pipelines' ? 'rtab-active' : ''}`}
+                  style={activeTab === 'pipelines' ? { '--rtab-c': '#10b981' } : {}}
+                  onClick={() => setActiveTab('pipelines')}
+                >🔀 Pipelines</button>
               )}
             </div>
           </div>
           <div className="results-panel-body">
-            {activeTab === 'types'      && typesResult      && <TypesApplied    applyData={typesResult}    />}
-            {activeTab === 'doublons'   && doublonsResult    && <ResultDoublons  report={doublonsResult}    />}
-            {activeTab === 'outliers'   && outliersResult    && <ResultOutliers  report={outliersResult}    />}
-            {activeTab === 'imputation' && imputationResult  && <ResultImputation report={imputationResult} />}
+            {activeTab === 'types'     && typesResult    && <TypesApplied   applyData={typesResult}  />}
+            {activeTab === 'doublons'  && doublonsResult  && <ResultDoublons report={doublonsResult}  />}
+            {activeTab === 'outliers'  && outliersResult  && <ResultOutliers report={outliersResult}  />}
+            {activeTab === 'pipelines' && pipelineResult  && <ResultPipelines result={pipelineResult} sessionId={sessionId} />}
           </div>
         </div>
       )}
@@ -1436,42 +1498,46 @@ export default function DataCleaning({ activeFile, setCleaningSession }) {
       )}
 
       {/* ══════════════════════════════════════════════════════════════════════
-          MODAL IMPUTATION
+          MODAL PIPELINE BUILDER
           ══════════════════════════════════════════════════════════════════ */}
-      {impPhase === 'modal' && (
-        <div className="modal-overlay" onClick={() => setImpPhase(null)}>
+      {pipPhase === 'modal' && (
+        <div className="modal-overlay" onClick={() => setPipPhase(null)}>
           <div className="pipeline-modal" onClick={e => e.stopPropagation()}>
 
             <div className="modal-header">
               <div>
-                <h2 className="modal-title">🩹 Gestion des valeurs manquantes</h2>
+                <h2 className="modal-title">🔀 Construction des pipelines</h2>
                 <p className="modal-subtitle">
-                  Choisissez le mode global, ajustez colonne par colonne, puis confirmez.
+                  Sélectionnez la variable cible, configurez les pipelines, puis lancez.
                 </p>
               </div>
-              <button className="modal-close-btn" onClick={() => setImpPhase(null)} title="Annuler">✕</button>
+              <button className="modal-close-btn" onClick={() => setPipPhase(null)} title="Annuler">✕</button>
             </div>
 
             <div className="modal-body">
-              <ImputationReviewSection
-                missingReport={missingReport}
-                userStrategies={userImputStrategies}
-                onStrategyChange={(col, strat) =>
-                  setUserImputStrategies(prev => ({ ...prev, [col]: strat }))
-                }
-                imputMode={imputMode}
-                onModeChange={handleModeChange}
+              <PipelineBuilderSection
+                targetCandidates={targetCandidates}
+                selectedTarget={selectedTarget}
+                onSelectTarget={setSelectedTarget}
+                cardinality={cardinalityThresh}
+                onCardinalityChange={setCardinalityThresh}
+                nBins={nBinsPipeline}
+                onNBinsChange={setNBinsPipeline}
+                allColumns={allColumnsForPipeline}
+                excludedCols={excludedCols}
+                onToggleExclude={toggleExclude}
               />
             </div>
 
             <div className="modal-footer">
-              <button className="btn-modal-cancel" onClick={() => setImpPhase(null)}>Annuler</button>
+              <button className="btn-modal-cancel" onClick={() => setPipPhase(null)}>Annuler</button>
               <button
                 className="btn-modal-confirm"
                 style={{ background: '#10b981' }}
-                onClick={confirmImputation}
+                onClick={buildPipelines}
+                disabled={!selectedTarget}
               >
-                ✓ Confirmer et appliquer
+                🔀 Construire les pipelines
               </button>
             </div>
 
@@ -1479,14 +1545,14 @@ export default function DataCleaning({ activeFile, setCleaningSession }) {
         </div>
       )}
 
-      {/* Overlay applying — imputation */}
-      {impPhase === 'applying' && (
+      {/* Overlay building — pipelines */}
+      {pipPhase === 'building' && (
         <div className="modal-overlay">
           <div className="applying-card">
             <span className="applying-spinner" style={{ borderTopColor: '#10b981', borderColor: '#d1fae5' }} />
             <div>
-              <div className="applying-title">Imputation en cours…</div>
-              <div className="applying-sub">Application des stratégies par colonne</div>
+              <div className="applying-title">Construction des pipelines…</div>
+              <div className="applying-sub">WOE · OHE · Target Encoding</div>
             </div>
           </div>
         </div>

@@ -6,7 +6,20 @@ import FormData from "form-data";
 const router = express.Router();
 const upload = multer();
 
-// Proxy générique vers Flask — tous les sous-chemins (woe/compute, init, etc.)
+// Proxy générique GET vers Flask
+router.get("/*", async (req, res) => {
+  const flaskUrl = `http://localhost:5000/api/data-modelling${req.path}`;
+  try {
+    const response = await axios.get(flaskUrl);
+    res.json(response.data);
+  } catch (e) {
+    const status = e.response?.status || 500;
+    const message = e.response?.data?.error || e.message || "Erreur interne";
+    res.status(status).json({ error: message });
+  }
+});
+
+// Proxy générique POST vers Flask — tous les sous-chemins (woe/compute, init, train, etc.)
 router.post("/*", upload.none(), async (req, res) => {
   const flaskUrl = `http://localhost:5000/api/data-modelling${req.path}`;
 

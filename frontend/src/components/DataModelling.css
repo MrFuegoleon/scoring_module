@@ -114,7 +114,14 @@
 
 /* ── Header ─────────────────────────────────────────────────────────────── */
 .dm-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
   margin-bottom: 2rem;
+}
+.dm-header-left {
+  flex: 1;
 }
 .dm-header h1 {
   font-size: 1.6rem;
@@ -126,6 +133,34 @@
   font-size: 0.9rem;
   color: var(--muted, #6b7280);
   margin: 0;
+}
+
+.btn-dm-reset {
+  padding: 0.4rem 0.9rem;
+  border-radius: 8px;
+  border: 1px solid #e5e7eb;
+  background: #fff;
+  font-size: 0.8rem;
+  color: #6b7280;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: border-color .15s, color .15s;
+  flex-shrink: 0;
+  align-self: flex-start;
+}
+.btn-dm-reset:hover {
+  border-color: #ef4444;
+  color: #ef4444;
+}
+
+.dm-reset-notif {
+  background: #fff7ed;
+  border: 1px solid #fed7aa;
+  border-radius: 8px;
+  padding: 0.6rem 1rem;
+  font-size: 0.82rem;
+  color: #92400e;
+  margin-bottom: 1rem;
 }
 .dm-session-info {
   display: inline-flex;
@@ -430,3 +465,264 @@
 .bin-label    { font-family: monospace; font-size: 0.78rem; max-width: 200px; }
 .missing-tag  { background: #fef3c7; color: #78350f; padding: 0.1rem 0.4rem; border-radius: 4px; font-family: sans-serif; }
 .woe-value    { font-weight: 700; font-family: monospace; }
+
+/* ── WOE → Training button row ───────────────────────────────────────────── */
+.dm-woe-actions {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-top: 1.5rem;
+  gap: 1rem;
+}
+
+/* ── Training config ─────────────────────────────────────────────────────── */
+.train-config-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1.25rem;
+  margin-bottom: 1.75rem;
+}
+@media (max-width: 700px) { .train-config-grid { grid-template-columns: 1fr; } }
+
+.train-config-card {
+  border: 1.5px solid #e5e7eb;
+  border-radius: 12px;
+  padding: 1.1rem 1.2rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.9rem;
+}
+.train-card-woe  { border-color: #c7d2fe; background: #f5f3ff08; }
+.train-card-tree { border-color: #fde68a; background: #fffbeb08; }
+
+.train-card-header {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+.train-card-icon  { font-size: 1.4rem; }
+.train-card-title { font-weight: 700; font-size: 0.9rem; color: #111827; }
+.train-card-sub   { font-size: 0.75rem; color: #6b7280; }
+
+.train-config-field { display: flex; flex-direction: column; gap: 0.4rem; }
+.train-config-field > label:first-child {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: #374151;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+}
+
+.train-iv-btns { display: flex; gap: 0.35rem; }
+.train-iv-btn {
+  padding: 0.25rem 0.65rem;
+  border-radius: 6px;
+  border: 1px solid #d1d5db;
+  background: #fff;
+  font-size: 0.8rem;
+  cursor: pointer;
+  transition: all .15s;
+}
+.train-iv-btn.active { background: #6366f1; border-color: #6366f1; color: #fff; font-weight: 600; }
+
+.train-model-checks { display: flex; flex-direction: column; gap: 0.35rem; }
+.train-check-label {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.82rem;
+  color: #374151;
+  cursor: pointer;
+}
+
+.train-ncomp-input {
+  margin-top: 0.3rem;
+  padding: 0.3rem 0.6rem;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  font-size: 0.8rem;
+  width: 100%;
+}
+
+.btn-train-run {
+  padding: 0.4rem 0.9rem;
+  border-radius: 8px;
+  border: 1.5px solid var(--btnc, #6366f1);
+  background: transparent;
+  color: var(--btnc, #6366f1);
+  font-size: 0.8rem;
+  font-weight: 600;
+  cursor: pointer;
+  align-self: flex-start;
+  transition: all .15s;
+}
+.btn-train-run:hover:not(:disabled) { background: var(--btnc, #6366f1); color: #fff; }
+.btn-train-run:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* ── Training results grid ───────────────────────────────────────────────── */
+.train-results-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 1.25rem;
+  margin-bottom: 1.5rem;
+}
+
+.model-result-card {
+  border: 1.5px solid color-mix(in srgb, var(--mc, #6366f1) 30%, #e5e7eb);
+  border-radius: 12px;
+  padding: 1rem;
+  background: #fff;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.model-result-header {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+.model-result-icon { font-size: 1.1rem; }
+.model-result-name { font-weight: 700; font-size: 0.9rem; color: #111827; flex: 1; }
+.model-result-spinner {
+  width: 14px; height: 14px;
+  border: 2px solid #e5e7eb;
+  border-top-color: var(--mc, #6366f1);
+  border-radius: 50%;
+  animation: spin .7s linear infinite;
+}
+.model-result-ok  { color: #10b981; font-weight: 700; font-size: 0.85rem; }
+.model-result-err { color: #ef4444; font-weight: 700; font-size: 0.85rem; }
+
+.model-result-loading {
+  font-size: 0.8rem;
+  color: #6b7280;
+  text-align: center;
+  padding: 1rem;
+}
+.model-result-error {
+  font-size: 0.8rem;
+  color: #b91c1c;
+  background: #fef2f2;
+  border-radius: 6px;
+  padding: 0.5rem 0.75rem;
+}
+
+.model-metrics-row {
+  display: flex;
+  gap: 0.5rem;
+}
+.model-metric-chip {
+  flex: 1;
+  background: #f9fafb;
+  border-radius: 8px;
+  padding: 0.5rem 0.25rem;
+  text-align: center;
+}
+.model-metric-val   { display: block; font-size: 1.1rem; font-weight: 800; }
+.model-metric-label { font-size: 0.68rem; color: #9ca3af; text-transform: uppercase; letter-spacing: .05em; }
+
+.model-tabs { display: flex; gap: 0.35rem; }
+.model-tab {
+  padding: 0.25rem 0.7rem;
+  border-radius: 6px;
+  border: 1px solid #e5e7eb;
+  background: #fff;
+  font-size: 0.75rem;
+  cursor: pointer;
+  color: #6b7280;
+  transition: all .15s;
+}
+.model-tab.active {
+  background: var(--mtc, #6366f1);
+  border-color: var(--mtc, #6366f1);
+  color: #fff;
+  font-weight: 600;
+}
+
+.model-detail-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.75rem;
+}
+.model-detail-label {
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: #6b7280;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  margin-bottom: 0.35rem;
+}
+.model-cv-note {
+  margin-top: 0.4rem;
+  font-size: 0.7rem;
+  color: #9ca3af;
+}
+.model-pca-note {
+  margin-top: 0.25rem;
+  font-size: 0.7rem;
+  color: #6366f1;
+  font-weight: 600;
+}
+
+/* ── ROC Curve ───────────────────────────────────────────────────────────── */
+.roc-svg {
+  width: 100%;
+  max-width: 200px;
+  border: 1px solid #f3f4f6;
+  border-radius: 6px;
+  background: #fafafa;
+}
+
+/* ── Confusion Matrix ────────────────────────────────────────────────────── */
+.conf-matrix        { display: flex; flex-direction: column; gap: 0.2rem; }
+.conf-matrix-label-row { display: grid; grid-template-columns: 60px 1fr 1fr; gap: 0.2rem; }
+.conf-pred-label    { font-size: 0.68rem; color: #6b7280; text-align: center; font-weight: 600; }
+.conf-matrix-row    { display: grid; grid-template-columns: 60px 1fr 1fr; gap: 0.2rem; }
+.conf-real-label    { font-size: 0.68rem; color: #6b7280; display: flex; align-items: center; font-weight: 600; }
+.conf-cell          { border-radius: 5px; padding: 0.35rem; text-align: center; font-weight: 700; font-size: 0.85rem; }
+.conf-pct           { font-size: 0.65rem; font-weight: 400; opacity: 0.8; }
+
+/* ── Feature Importance ──────────────────────────────────────────────────── */
+.feat-imp-list  { display: flex; flex-direction: column; gap: 0.35rem; }
+.feat-imp-title {
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: #6b7280;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  margin-bottom: 0.2rem;
+}
+.feat-imp-row {
+  display: grid;
+  grid-template-columns: 120px 1fr 48px;
+  align-items: center;
+  gap: 0.4rem;
+}
+.feat-imp-name {
+  font-size: 0.75rem;
+  color: #374151;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.feat-imp-bar-track {
+  height: 6px;
+  background: #f3f4f6;
+  border-radius: 3px;
+  overflow: hidden;
+}
+.feat-imp-bar {
+  height: 100%;
+  background: #6366f1;
+  border-radius: 3px;
+  transition: width .3s;
+}
+.feat-imp-val {
+  font-size: 0.72rem;
+  color: #6b7280;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+@keyframes spin { to { transform: rotate(360deg); } }

@@ -1,8 +1,6 @@
-import json
 import numpy as np
 import pandas as pd
 from flask import Blueprint, request, jsonify
-from services.modelling_service import ModellingService
 from services.session_store import SessionStore
 
 data_modelling_bp = Blueprint('data_modelling', __name__)
@@ -31,102 +29,109 @@ def _safe_records(df: pd.DataFrame, n: int = 10) -> list:
     return rows
 
 
-def _col_profiles(df: pd.DataFrame) -> dict:
-    total = len(df)
-    profiles = {}
-    for col in df.columns:
-        n_missing = int(df[col].isna().sum())
-        dtype_str = str(df[col].dtype)
-        if pd.api.types.is_numeric_dtype(df[col]):
-            kind = 'numeric'
-        elif pd.api.types.is_datetime64_any_dtype(df[col]):
-            kind = 'datetime'
-        else:
-            kind = 'categorical'
-        profiles[col] = {
-            "dtype":     dtype_str,
-            "kind":      kind,
-            "n_missing": n_missing,
-            "fill_rate": round((total - n_missing) / total * 100, 1) if total > 0 else 0,
-            "n_unique":  int(df[col].nunique(dropna=True)),
-        }
-    return profiles
-
-
 # ── /modelling/init ───────────────────────────────────────────────────────────
+# Vérifie que les deux datamarts sont disponibles et retourne leurs infos.
 @data_modelling_bp.route('/init', methods=['POST'])
 def modelling_init():
     try:
         session_id = request.form.get('session_id')
         if not session_id:
             return jsonify({"error": "session_id manquant"}), 400
-        if not SessionStore.exists(session_id):
-            return jsonify({"error": "Session introuvable — terminez d'abord le Data Cleaning"}), 404
 
-        df = SessionStore.get(session_id)
-        candidates = ModellingService.detect_target_candidates(df)
+        logit_sid = f'{session_id}_logit'
+        tree_sid  = f'{session_id}_tree'
+
+        if not SessionStore.exists(logit_sid) or not SessionStore.exists(tree_sid):
+            return jsonify({
+                "error": "Datamarts non construits — terminez le pipeline Data Cleaning (étape pipelines)"
+            }), 404
+
+        meta       = SessionStore.get_meta(session_id)
+        target_col = meta.get('target_col')
+
+        df_logit = SessionStore.get(logit_sid)
+        df_tree  = SessionStore.get(tree_sid)
+
+        def _col_kind(df, col):
+            if pd.api.types.is_numeric_dtype(df[col]):
+                return 'numeric'
+            return 'categorical'
 
         return jsonify({
-            "success":           True,
-            "target_candidates": candidates,
-            "statistics": {
-                "rows_count": len(df),
-                "cols_count": len(df.columns),
+            "success":    True,
+            "target_col": target_col,
+            "logit": {
+                "n_rows":  len(df_logit.dropna(subset=[target_col])),
+                "n_cols":  len(df_logit.columns),
+                "columns": list(df_logit.columns),
             },
-            "col_profiles": _col_profiles(df),
-            "preview":      _safe_records(df, 10),
+            "tree": {
+                "n_rows":  len(df_tree.dropna(subset=[target_col])),
+                "n_cols":  len(df_tree.columns),
+                "columns": list(df_tree.columns),
+            },
         }), 200
 
     except Exception as e:
         return jsonify({"error": f"Erreur serveur : {str(e)}"}), 500
 
 
-# ── /modelling/woe/compute ────────────────────────────────────────────────────
-# Calcule WOE et IV pour toutes les variables (ou un sous-ensemble).
-# Les valeurs manquantes sont traitées comme un bin à part — pas d'imputation.
-@data_modelling_bp.route('/woe/compute', methods=['POST'])
-def compute_woe():
+# ── /modelling/models ─────────────────────────────────────────────────────────
+@data_modelling_bp.route('/models', methods=['GET'])
+def get_available_models():
+    from services.training_service import available_models
+    return jsonify({'models': available_models()}), 200
+
+
+# ── /modelling/train ──────────────────────────────────────────────────────────
+@data_modelling_bp.route('/train', methods=['POST'])
+def train_model():
     try:
-        session_id = request.form.get('session_id')
-        target_col = request.form.get('target_col')
+        from services.training_service import TrainingService
 
-        if not session_id:
-            return jsonify({"error": "session_id manquant"}), 400
-        if not target_col:
-            return jsonify({"error": "target_col manquant"}), 400
-        if not SessionStore.exists(session_id):
-            return jsonify({"error": "Session introuvable"}), 404
+        session_id   = request.form.get('session_id')
+        model_type   = request.form.get('model_type')
+        use_pca      = request.form.get('use_pca', 'false').lower() == 'true'
+        n_comp_raw   = request.form.get('n_components')
+        n_components = int(n_comp_raw) if n_comp_raw else None
+    
+        if not session_id or not model_type:
+            return jsonify({"error": "Paramètres manquants (session_id, model_type)"}), 400
 
-        df = SessionStore.get(session_id)
+        # Détermine quel datamart utiliser
+        pipeline  = 'logit' if model_type == 'logit' else 'tree'
+        sid       = f'{session_id}_{pipeline}'
 
-        if target_col not in df.columns:
-            return jsonify({"error": f"Colonne « {target_col} » introuvable"}), 400
+        if not SessionStore.exists(sid):
+            return jsonify({"error": f"Datamart '{pipeline}' non trouvé — construisez les pipelines d'abord"}), 404
 
-        feature_cols_raw = request.form.get('feature_cols')
-        feature_cols = json.loads(feature_cols_raw) if feature_cols_raw else None
-        n_bins = int(request.form.get('n_bins', 10))
+        df         = SessionStore.get(sid)
+        meta       = SessionStore.get_meta(session_id)
+        target_col = meta.get('target_col')
 
-        woe_report = ModellingService.compute_woe_iv(df, target_col, feature_cols, n_bins=n_bins)
+        if not target_col or target_col not in df.columns:
+            return jsonify({"error": "Variable cible introuvable dans le datamart"}), 400
 
-        # Dataset transformé (aperçu 100 lignes)
-        df_woe     = ModellingService.apply_woe_transform(df, target_col, woe_report, n_bins=n_bins)
-        woe_preview = _safe_records(df_woe, 100)
-        woe_columns = list(df_woe.columns)
+        X, y, feature_names = TrainingService.prepare_preencoded_features(df, target_col)
 
-        # Résumé de distribution IV
-        iv_summary = {"Inutile": 0, "Faible": 0, "Moyen": 0, "Fort": 0, "Suspect": 0}
-        for info in woe_report.values():
-            iv_summary[info["iv_label"]] = iv_summary.get(info["iv_label"], 0) + 1
+        pca_report = None
+        if use_pca and pipeline == 'tree':
+            X, pca_report = TrainingService.apply_pca(X, n_components)
 
-        return jsonify({
-            "success":     True,
-            "target_col":  target_col,
-            "woe_report":  woe_report,
-            "n_features":  len(woe_report),
-            "iv_summary":  iv_summary,
-            "woe_preview": woe_preview,
-            "woe_columns": woe_columns,
-        }), 200
+        results = TrainingService.train_and_evaluate(X, y, model_type)
+
+        response = {
+            'success':       True,
+            'pipeline':      pipeline,
+            'model_type':    model_type,
+            'target_col':    target_col,
+            'results':       results,
+            'feature_names': feature_names,
+        }
+        if pca_report:
+            response['pca_report'] = pca_report
+
+        return jsonify(response), 200
 
     except ValueError as e:
         return jsonify({"error": str(e)}), 400

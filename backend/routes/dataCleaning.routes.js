@@ -7,7 +7,24 @@ import fs from "fs";
 const router = express.Router();
 const upload = multer({ dest: "uploads/" });
 
-// Proxy générique vers Flask — gère tous les sous-chemins (y compris pipeline/init,
+// Proxy GET → Flask (ex: /pipeline/download/<type>?session_id=...)
+router.get("/*", async (req, res) => {
+  const flaskUrl = `http://localhost:5000/api/data-cleaning${req.path}`;
+  try {
+    const response = await axios.get(flaskUrl, {
+      params: req.query,
+      responseType: "stream",
+    });
+    res.set(response.headers);
+    response.data.pipe(res);
+  } catch (e) {
+    const status = e.response?.status || 500;
+    const message = e.response?.data?.error || e.message || "Erreur interne";
+    res.status(status).json({ error: message });
+  }
+});
+
+// Proxy générique POST → Flask — gère tous les sous-chemins (y compris pipeline/init,
 // pipeline/confirm) et rend le fichier optionnel (confirm et missing n'en ont pas).
 router.post("/*", upload.single("file"), async (req, res) => {
   const flaskUrl = `http://localhost:5000/api/data-cleaning${req.path}`;

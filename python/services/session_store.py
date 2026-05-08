@@ -12,10 +12,14 @@ class SessionStore:
         1. create(df)    → session_id  (upload initial)
         2. get(sid)      → df (copie)  (lectures par les étapes)
         3. update(sid, df)             (après chaque étape de transformation)
-        4. delete(sid)                 (fin de session ou reset)
+        4. set(sid, df)                (écriture directe sans création, ex: datamarts pipelines)
+        5. delete(sid)                 (fin de session ou reset)
+
+    Métadonnées (target_col, etc.) stockées séparément dans _meta_store.
     """
 
     _store: dict[str, pd.DataFrame] = {}
+    _meta_store: dict[str, dict] = {}
     _lock = Lock()
 
     @classmethod
@@ -47,3 +51,19 @@ class SessionStore:
     def exists(cls, sid: str) -> bool:
         with cls._lock:
             return sid in cls._store
+
+    @classmethod
+    def set(cls, sid: str, df: pd.DataFrame) -> None:
+        """Écriture directe sans pré-existence requise (pour les datamarts pipelines)."""
+        with cls._lock:
+            cls._store[sid] = df.copy()
+
+    @classmethod
+    def set_meta(cls, sid: str, meta: dict) -> None:
+        with cls._lock:
+            cls._meta_store[sid] = meta.copy()
+
+    @classmethod
+    def get_meta(cls, sid: str) -> dict:
+        with cls._lock:
+            return cls._meta_store.get(sid, {}).copy()

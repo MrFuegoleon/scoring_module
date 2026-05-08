@@ -1,10 +1,12 @@
-from flask import Blueprint, request, jsonify
+from flask import Blueprint, request, jsonify, send_file
 import pandas as pd
 import numpy as np
 import io
 import json
 from services.cleaning_service import DataCleaningService
 from services.session_store import SessionStore
+from services.modelling_service import ModellingService
+from services.pipeline_service import PipelineService
 
 data_cleaning_bp = Blueprint("data-cleaning", __name__)
 
@@ -88,13 +90,16 @@ def pipeline_init():
         # sont quand même analysées)
         outliers_report = DataCleaningService.detect_outliers(df_copy)
 
+        target_candidates = ModellingService.detect_target_candidates(df)
+
         return jsonify({
-            "success":        True,
-            "session_id":     session_id,
-            "detected_types": detected_types,
-            "type_report":    type_report,
-            "doublons_report": doublons_report,
-            "outliers_report": outliers_report,
+            "success":           True,
+            "session_id":        session_id,
+            "detected_types":    detected_types,
+            "type_report":       type_report,
+            "doublons_report":   doublons_report,
+            "outliers_report":   outliers_report,
+            "target_candidates": target_candidates,
             "statistics": {
                 "rows_count": len(df),
                 "cols_count": len(df.columns),
@@ -236,7 +241,7 @@ def pipeline_preview():
             "success":      True,
             "shape":        {"rows": total, "cols": len(df.columns)},
             "col_profiles": col_profiles,
-            "preview":      _safe_records(df, 20),
+            "preview":      _safe_records(df, 100),
         }), 200
 
     except Exception as e:
@@ -317,3 +322,79 @@ def missing_apply():
 
     except Exception as e:
         return jsonify({"error": f"Erreur serveur : {str(e)}"}), 500
+
+
+# ── /pipeline/build ───────────────────────────────────────────────────────────
+# Construit les deux datamarts (logit + tree) à partir du df nettoyé en session.
+@data_cleaning_bp.route("/pipeline/build", methods=["POST"])
+def pipeline_build():
+    try:
+        session_id    = request.form.get('session_id')
+        target_col    = request.form.get('target_col')
+        n_bins        = int(request.form.get('n_bins', 10))
+        cardinality   = int(request.form.get('cardinality_threshold', 10))
+        smoothing     = float(request.form.get('smoothing', 0.2))
+        excl_raw      = request.form.get('excluded_cols')
+        excluded_cols = json.loads(excl_raw) if excl_raw else []
+
+        if not session_id or not target_col:
+            return jsonify({'error': 'session_id et target_col requis'}), 400
+        if not SessionStore.exists(session_id):
+            return jsonify({'error': 'Session introuvable — relancez le pipeline'}), 404
+
+        df = SessionStore.get(session_id)
+        if target_col not in df.columns:
+            return jsonify({'error': f'Colonne {target_col} introuvable'}), 400
+
+        # Supprimer les colonnes exclues (sauf la cible)
+        cols_to_drop = [c for c in excluded_cols if c in df.columns and c != target_col]
+        if cols_to_drop:
+            df = df.drop(columns=cols_to_drop)
+
+        df_logit, logit_summary = PipelineService.build_logit_pipeline(df, target_col, n_bins)
+        df_tree,  tree_summary  = PipelineService.build_tree_pipeline(df, target_col, cardinality, smoothing)
+
+        SessionStore.set(f'{session_id}_logit', df_logit)
+        SessionStore.set(f'{session_id}_tree',  df_tree)
+        SessionStore.set_meta(session_id, {'target_col': target_col})
+
+        return jsonify({
+            'success':       True,
+            'target_col':    target_col,
+            'logit_summary': logit_summary,
+            'tree_summary':  tree_summary,
+            'logit_preview': _safe_records(df_logit, 8),
+            'tree_preview':  _safe_records(df_tree,  8),
+        }), 200
+
+    except ValueError as e:
+        return jsonify({'error': str(e)}), 400
+    except Exception as e:
+        return jsonify({'error': f'Erreur serveur : {str(e)}'}), 500
+
+
+# ── /pipeline/download/<type> ─────────────────────────────────────────────────
+# Retourne le datamart (logit | tree) en CSV téléchargeable.
+@data_cleaning_bp.route("/pipeline/download/<pipeline_type>", methods=["GET"])
+def pipeline_download(pipeline_type):
+    session_id = request.args.get('session_id')
+    if not session_id:
+        return jsonify({'error': 'session_id requis'}), 400
+    if pipeline_type not in ('logit', 'tree'):
+        return jsonify({'error': 'pipeline_type doit être logit ou tree'}), 400
+
+    sid = f'{session_id}_{pipeline_type}'
+    if not SessionStore.exists(sid):
+        return jsonify({'error': "Datamart non trouvé — construisez d'abord les pipelines"}), 404
+
+    df  = SessionStore.get(sid)
+    buf = io.BytesIO()
+    df.to_csv(buf, index=False)
+    buf.seek(0)
+
+    return send_file(
+        buf,
+        mimetype='text/csv',
+        as_attachment=True,
+        download_name=f'datamart_{pipeline_type}_{session_id[:8]}.csv',
+    )

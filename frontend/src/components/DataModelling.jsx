@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import './DataModelling.css'
 
 // ── Dataset Preview ───────────────────────────────────────────────────────────
@@ -246,23 +246,215 @@ function TargetCard({ candidate, selected, onSelect }) {
   )
 }
 
+// ── ROC Curve SVG ─────────────────────────────────────────────────────────────
+function RocCurve({ roc, color = '#6366f1', label }) {
+  if (!roc) return null
+  const W = 200, H = 160, PAD = 20
+  const pts = roc.fpr.map((x, i) => [
+    PAD + x * (W - PAD),
+    H - PAD - roc.tpr[i] * (H - PAD),
+  ])
+  const d = pts.map((p, i) => `${i === 0 ? 'M' : 'L'}${p[0].toFixed(1)},${p[1].toFixed(1)}`).join(' ')
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`} className="roc-svg">
+      {/* Diagonale aléatoire */}
+      <line x1={PAD} y1={H - PAD} x2={W} y2={PAD} stroke="#e5e7eb" strokeWidth="1" strokeDasharray="4,3" />
+      {/* Axes */}
+      <line x1={PAD} y1={PAD - 4} x2={PAD} y2={H - PAD} stroke="#d1d5db" strokeWidth="1" />
+      <line x1={PAD} y1={H - PAD} x2={W + 2} y2={H - PAD} stroke="#d1d5db" strokeWidth="1" />
+      {/* Courbe */}
+      <path d={d} fill="none" stroke={color} strokeWidth="2" />
+      {/* Label */}
+      {label && <text x={PAD + 4} y={PAD + 10} fontSize="9" fill={color}>{label}</text>}
+    </svg>
+  )
+}
+
+// ── Confusion Matrix ──────────────────────────────────────────────────────────
+function ConfusionMatrix({ cm }) {
+  if (!cm) return null
+  const [[tn, fp], [fn, tp]] = cm
+  const total = tn + fp + fn + tp
+  return (
+    <div className="conf-matrix">
+      <div className="conf-matrix-label-row">
+        <span />
+        <span className="conf-pred-label">Prédit 0</span>
+        <span className="conf-pred-label">Prédit 1</span>
+      </div>
+      {[['Réel 0', tn, fp, '#10b981', '#ef4444'],
+        ['Réel 1', fn, tp, '#ef4444', '#10b981']].map(([lbl, a, b, ca, cb]) => (
+        <div key={lbl} className="conf-matrix-row">
+          <span className="conf-real-label">{lbl}</span>
+          <span className="conf-cell" style={{ background: ca + '22', color: ca }}>
+            {a}<span className="conf-pct"> {(a/total*100).toFixed(0)}%</span>
+          </span>
+          <span className="conf-cell" style={{ background: cb + '22', color: cb }}>
+            {b}<span className="conf-pct"> {(b/total*100).toFixed(0)}%</span>
+          </span>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+// ── Feature Importance ────────────────────────────────────────────────────────
+function FeatureImportance({ features, impType }) {
+  if (!features || features.length === 0) return null
+  const max = features[0].importance || 1
+  return (
+    <div className="feat-imp-list">
+      <div className="feat-imp-title">{impType}</div>
+      {features.slice(0, 10).map(({ feature, importance }) => (
+        <div key={feature} className="feat-imp-row">
+          <span className="feat-imp-name" title={feature}>{feature}</span>
+          <div className="feat-imp-bar-track">
+            <div
+              className="feat-imp-bar"
+              style={{ width: `${(importance / max) * 100}%` }}
+            />
+          </div>
+          <span className="feat-imp-val">{importance.toFixed(3)}</span>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+// ── Model Result Card ─────────────────────────────────────────────────────────
+const MODEL_META = {
+  logit:         { name: 'Régression Logistique', color: '#6366f1', icon: '📈' },
+  xgboost:       { name: 'XGBoost',               color: '#f59e0b', icon: '🌲' },
+  lightgbm:      { name: 'LightGBM',              color: '#10b981', icon: '⚡' },
+  random_forest: { name: 'Random Forest',         color: '#3b82f6', icon: '🌳' },
+}
+
+function ModelResultCard({ modelType, result, error, running }) {
+  const [tab, setTab] = useState('metrics')
+  const meta = MODEL_META[modelType] || { name: modelType, color: '#6b7280', icon: '🤖' }
+
+  return (
+    <div className="model-result-card" style={{ '--mc': meta.color }}>
+      <div className="model-result-header">
+        <span className="model-result-icon">{meta.icon}</span>
+        <span className="model-result-name">{meta.name}</span>
+        {running && <span className="model-result-spinner" />}
+        {result && <span className="model-result-ok">✓</span>}
+        {error && <span className="model-result-err">✗</span>}
+      </div>
+
+      {running && (
+        <div className="model-result-loading">Entraînement en cours…</div>
+      )}
+
+      {error && !running && (
+        <div className="model-result-error">⚠ {error}</div>
+      )}
+
+      {result && !running && (
+        <>
+          {/* Métriques principales */}
+          <div className="model-metrics-row">
+            {[['AUC', result.results.auc],
+              ['Gini', result.results.gini],
+              ['KS',   result.results.ks]].map(([k, v]) => (
+              <div key={k} className="model-metric-chip">
+                <span className="model-metric-val" style={{ color: meta.color }}>
+                  {(v * 100).toFixed(1)}%
+                </span>
+                <span className="model-metric-label">{k}</span>
+              </div>
+            ))}
+          </div>
+
+          {/* Tabs */}
+          <div className="model-tabs">
+            {[['metrics', 'ROC + Matrice'], ['importance', 'Variables']].map(([k, l]) => (
+              <button
+                key={k}
+                className={`model-tab ${tab === k ? 'active' : ''}`}
+                style={tab === k ? { '--mtc': meta.color } : {}}
+                onClick={() => setTab(k)}
+              >{l}</button>
+            ))}
+          </div>
+
+          {tab === 'metrics' && (
+            <div className="model-detail-row">
+              <div>
+                <div className="model-detail-label">Courbe ROC</div>
+                <RocCurve roc={result.results.roc_curve} color={meta.color} />
+              </div>
+              <div>
+                <div className="model-detail-label">Matrice de confusion</div>
+                <ConfusionMatrix cm={result.results.confusion_matrix} />
+                <div className="model-cv-note">
+                  CV {result.results.cv_folds} folds · {result.results.n_samples} obs · {result.results.n_features} features
+                </div>
+                {result.pca_report && (
+                  <div className="model-pca-note">
+                    ACP : {result.pca_report.n_components} composantes
+                    ({(result.pca_report.total_variance_kept * 100).toFixed(0)}% variance)
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {tab === 'importance' && (
+            <FeatureImportance
+              features={result.results.feature_importance}
+              impType={result.results.importance_type}
+            />
+          )}
+        </>
+      )}
+    </div>
+  )
+}
+
 // ── Composant principal ───────────────────────────────────────────────────────
 export default function DataModelling({ cleaningSession }) {
-  const [phase,          setPhase]          = useState('idle')
-  const [error,          setError]          = useState(null)
-  const [stats,          setStats]          = useState(null)
-  const [colProfiles,    setColProfiles]    = useState(null)
-  const [preview,        setPreview]        = useState(null)
-  const [targetCands,    setTargetCands]    = useState([])
-  const [selectedTarget, setSelectedTarget] = useState(null)
-  const [woeReport,      setWoeReport]      = useState(null)
-  const [woePreview,     setWoePreview]     = useState(null)
-  const [woeColumns,     setWoeColumns]     = useState([])
-  const [ivSummary,      setIvSummary]      = useState(null)
-  const [expandedCol,    setExpandedCol]    = useState(null)
-  const [nBins,          setNBins]          = useState(10)
+  const [phase,        setPhase]        = useState('idle')
+  const [error,        setError]        = useState(null)
+  const [datamartInfo, setDatamartInfo] = useState(null)   // { target_col, logit, tree }
+  const [resetNotif,   setResetNotif]   = useState(false)
 
-  // ── Init : détection des candidats cibles ────────────────────────────────
+  // ── Training state ────────────────────────────────────────────────────────
+  const [trainConfig, setTrainConfig] = useState({
+    rawModels:   { xgboost: true, lightgbm: true, random_forest: true },
+    usePca:      false,
+    nComponents: null,
+  })
+  const [trainResults, setTrainResults] = useState({})
+  const [trainRunning, setTrainRunning] = useState({})
+  const [trainErrors,  setTrainErrors]  = useState({})
+
+  const prevSessionRef = useRef(null)
+
+  // ── Reset centralisé ──────────────────────────────────────────────────────
+  function resetModelling() {
+    setPhase('idle')
+    setError(null)
+    setDatamartInfo(null)
+    setTrainResults({})
+    setTrainRunning({})
+    setTrainErrors({})
+  }
+
+  // ── Auto-reset quand la session de cleaning change ────────────────────────
+  useEffect(() => {
+    if (!cleaningSession) return
+    if (prevSessionRef.current && prevSessionRef.current !== cleaningSession) {
+      resetModelling()
+      setResetNotif(true)
+      const t = setTimeout(() => setResetNotif(false), 5000)
+      return () => clearTimeout(t)
+    }
+    prevSessionRef.current = cleaningSession
+  }, [cleaningSession])
+
+  // ── Init : vérifie les datamarts et récupère leurs infos ─────────────────
   async function initModelling() {
     if (!cleaningSession) return
     setPhase('loading')
@@ -273,42 +465,46 @@ export default function DataModelling({ cleaningSession }) {
       const res  = await fetch('/api/data-modelling/init', { method: 'POST', body: fd })
       const data = await res.json()
       if (!res.ok || !data.success) throw new Error(data.error || `Erreur HTTP ${res.status}`)
-      setTargetCands(data.target_candidates)
-      setStats(data.statistics)
-      setColProfiles(data.col_profiles)
-      setPreview(data.preview)
-      setPhase('target')
+      setDatamartInfo(data)
+      setPhase('ready')
     } catch (e) {
       setError(e.message)
       setPhase('idle')
     }
   }
 
-  // ── Calcul WOE / IV ───────────────────────────────────────────────────────
-  async function computeWoe() {
-    if (!selectedTarget) return
-    setPhase('computing')
-    setError(null)
+  // ── Entraînement d'un modèle ──────────────────────────────────────────────
+  async function trainModel(modelType) {
+    setTrainRunning(prev => ({ ...prev, [modelType]: true }))
+    setTrainErrors(prev => ({ ...prev, [modelType]: null }))
+
+    const fd = new FormData()
+    fd.append('session_id', cleaningSession)
+    fd.append('model_type', modelType)
+    fd.append('use_pca',    String(trainConfig.usePca))
+    if (trainConfig.nComponents) fd.append('n_components', String(trainConfig.nComponents))
+
     try {
-      const fd = new FormData()
-      fd.append('session_id', cleaningSession)
-      fd.append('target_col', selectedTarget)
-      fd.append('n_bins', String(nBins))
-      const res  = await fetch('/api/data-modelling/woe/compute', { method: 'POST', body: fd })
+      const res  = await fetch('/api/data-modelling/train', { method: 'POST', body: fd })
       const data = await res.json()
       if (!res.ok || !data.success) throw new Error(data.error || `Erreur HTTP ${res.status}`)
-      setWoeReport(data.woe_report)
-      setWoePreview(data.woe_preview)
-      setWoeColumns(data.woe_columns)
-      setIvSummary(data.iv_summary)
-      setPhase('woe')
+      setTrainResults(prev => ({ ...prev, [modelType]: data }))
     } catch (e) {
-      setError(e.message)
-      setPhase('target')
+      setTrainErrors(prev => ({ ...prev, [modelType]: e.message }))
+    } finally {
+      setTrainRunning(prev => ({ ...prev, [modelType]: false }))
     }
   }
 
-  const toggleExpand = (col) => setExpandedCol(prev => prev === col ? null : col)
+  async function launchTraining() {
+    setPhase('training')
+    setTrainResults({})
+    setTrainErrors({})
+    trainModel('logit')
+    Object.entries(trainConfig.rawModels).forEach(([m, enabled]) => {
+      if (enabled) trainModel(m)
+    })
+  }
 
   // ── Rendu : pas de session ────────────────────────────────────────────────
   if (!cleaningSession) {
@@ -316,12 +512,12 @@ export default function DataModelling({ cleaningSession }) {
       <div className="dm-page">
         <div className="dm-header">
           <h1>🤖 Data Modelling</h1>
-          <p>Feature engineering et analyse prédictive</p>
+          <p>Entraînement et évaluation des modèles</p>
         </div>
         <div className="dm-no-session">
           <div className="dm-no-session-icon">🔗</div>
           <h3>Pipeline Data Cleaning requis</h3>
-          <p>Terminez le pipeline Data Cleaning pour transmettre le dataset nettoyé à ce module.</p>
+          <p>Terminez le pipeline Data Cleaning et construisez les datamarts pour accéder à ce module.</p>
         </div>
       </div>
     )
@@ -330,39 +526,49 @@ export default function DataModelling({ cleaningSession }) {
   return (
     <div className="dm-page">
       <div className="dm-header">
-        <h1>🤖 Data Modelling</h1>
-        <p>Feature engineering et analyse prédictive</p>
-        {stats && (
-          <div className="dm-session-info">
-            <span className="dm-session-dot" />
-            Session active · {stats.rows_count.toLocaleString()} lignes · {stats.cols_count} colonnes
-          </div>
+        <div className="dm-header-left">
+          <h1>🤖 Data Modelling</h1>
+          <p>Entraînement et évaluation des modèles</p>
+          {datamartInfo && (
+            <div className="dm-session-info">
+              <span className="dm-session-dot" />
+              Cible : <strong>{datamartInfo.target_col}</strong> ·
+              Logit {datamartInfo.logit.n_cols - 1} features ·
+              Tree {datamartInfo.tree.n_cols - 1} features
+            </div>
+          )}
+        </div>
+        {phase !== 'idle' && (
+          <button className="btn-dm-reset" onClick={resetModelling} title="Réinitialiser">
+            ↺ Réinitialiser
+          </button>
         )}
       </div>
 
-      {error && <div className="dm-error">⚠ {error}</div>}
-
-      {['target', 'woe', 'computing'].includes(phase) && (
-        <DatasetPreview colProfiles={colProfiles} preview={preview} stats={stats} />
+      {resetNotif && (
+        <div className="dm-reset-notif">
+          ⚠ Modélisation réinitialisée — nouvelle session de nettoyage détectée.
+        </div>
       )}
+
+      {error && <div className="dm-error">⚠ {error}</div>}
 
       {/* ── IDLE ── */}
       {phase === 'idle' && (
         <div className="dm-card dm-launch-card">
-          <div className="dm-launch-icon">📊</div>
-          <h3>Analyse WOE / IV</h3>
+          <div className="dm-launch-icon">🎯</div>
+          <h3>Entraînement des modèles</h3>
           <p>
-            Calcule le <strong>Weight of Evidence</strong> et l'<strong>Information Value</strong> pour
-            chaque variable. Les valeurs manquantes sont traitées comme un bin distinct — aucune imputation
-            requise.
+            Les datamarts construits en Data Cleaning sont utilisés directement.
+            Pipeline <strong>WOE → Logit</strong> et pipeline <strong>Tree-based</strong> (OHE + Target Encoding).
           </p>
           <div className="dm-launch-steps">
-            <div className="dm-step"><span>1</span> Sélectionner la variable cible (binaire)</div>
-            <div className="dm-step"><span>2</span> Calculer WOE / IV par variable</div>
-            <div className="dm-step"><span>3</span> Sélectionner les variables prédictives</div>
+            <div className="dm-step"><span>1</span> Vérifier les datamarts disponibles</div>
+            <div className="dm-step"><span>2</span> Configurer les modèles à entraîner</div>
+            <div className="dm-step"><span>3</span> Comparer AUC · Gini · KS</div>
           </div>
           <button className="btn-dm-launch" onClick={initModelling}>
-            Démarrer l'analyse →
+            Analyser les datamarts →
           </button>
         </div>
       )}
@@ -371,156 +577,126 @@ export default function DataModelling({ cleaningSession }) {
       {phase === 'loading' && (
         <div className="dm-loading">
           <div className="dm-spinner" />
-          <span>Analyse du dataset…</span>
+          <span>Vérification des datamarts…</span>
         </div>
       )}
 
-      {/* ── COMPUTING ── */}
-      {phase === 'computing' && (
-        <div className="dm-loading">
-          <div className="dm-spinner" />
-          <span>Calcul WOE / IV en cours…</span>
-        </div>
-      )}
-
-      {/* ── TARGET SELECTION ── */}
-      {phase === 'target' && (
+      {/* ── READY + TRAINING ── */}
+      {(phase === 'ready' || phase === 'training') && datamartInfo && (
         <div className="dm-section">
           <div className="dm-section-header">
-            <h2>1 · Variable cible</h2>
-            <p>
-              Sélectionnez la colonne binaire à prédire.
-              {targetCands.length === 0 && ' Aucune colonne binaire détectée dans le dataset.'}
-            </p>
+            <h2>Entraînement des modèles</h2>
+            <p>Variable cible : <strong>{datamartInfo.target_col}</strong></p>
           </div>
 
-          {targetCands.length > 0 ? (
-            <>
-              <div className="target-cards-grid">
-                {targetCands.map(c => (
-                  <TargetCard
-                    key={c.column}
-                    candidate={c}
-                    selected={selectedTarget === c.column}
-                    onSelect={setSelectedTarget}
-                  />
-                ))}
+          {/* Info datamarts */}
+          <div className="train-config-grid" style={{ marginBottom: '1rem' }}>
+            <div className="train-config-card train-card-woe">
+              <div className="train-card-header">
+                <span className="train-card-icon">📈</span>
+                <div>
+                  <div className="train-card-title">Pipeline Logit · WOE</div>
+                  <div className="train-card-sub">
+                    {datamartInfo.logit.n_rows.toLocaleString()} obs · {datamartInfo.logit.n_cols - 1} features WOE
+                  </div>
+                </div>
               </div>
+              <button
+                className="btn-train-run"
+                style={{ '--btnc': '#6366f1' }}
+                disabled={!!trainRunning['logit']}
+                onClick={() => trainModel('logit')}
+              >
+                {trainRunning['logit'] ? '⏳ En cours…' : '↺ Relancer Logit'}
+              </button>
+            </div>
 
-              <div className="dm-bins-control">
-                <label>Nombre de bins (variables continues)</label>
-                <div className="dm-bins-row">
-                  {[5, 10, 15, 20].map(n => (
-                    <button
-                      key={n}
-                      className={`dm-bins-btn ${nBins === n ? 'active' : ''}`}
-                      onClick={() => setNBins(n)}
-                    >{n}</button>
+            <div className="train-config-card train-card-tree">
+              <div className="train-card-header">
+                <span className="train-card-icon">🌲</span>
+                <div>
+                  <div className="train-card-title">Pipeline Tree-based</div>
+                  <div className="train-card-sub">
+                    {datamartInfo.tree.n_rows.toLocaleString()} obs · {datamartInfo.tree.n_cols - 1} features
+                  </div>
+                </div>
+              </div>
+              <div className="train-config-field">
+                <label>Modèles</label>
+                <div className="train-model-checks">
+                  {[['xgboost', '🌲 XGBoost'], ['lightgbm', '⚡ LightGBM'], ['random_forest', '🌳 Random Forest']].map(([m, l]) => (
+                    <label key={m} className="train-check-label">
+                      <input
+                        type="checkbox"
+                        checked={!!trainConfig.rawModels[m]}
+                        onChange={e => setTrainConfig(c => ({
+                          ...c, rawModels: { ...c.rawModels, [m]: e.target.checked }
+                        }))}
+                      />
+                      {l}
+                    </label>
                   ))}
                 </div>
               </div>
-
-              <button
-                className="btn-dm-launch"
-                onClick={computeWoe}
-                disabled={!selectedTarget}
-              >
-                Calculer WOE / IV →
-              </button>
-            </>
-          ) : (
-            <div className="dm-no-session">
-              <p>Aucune variable binaire détectée. Vérifiez vos données ou revenez au Data Cleaning.</p>
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* ── WOE / IV RESULTS ── */}
-      {phase === 'woe' && woeReport && (
-        <div className="dm-section">
-          <div className="dm-section-header">
-            <h2>2 · WOE / IV — Résultats</h2>
-            <p>Variable cible : <strong>{selectedTarget}</strong> · {Object.keys(woeReport).length} variables analysées</p>
-          </div>
-
-          {/* Distribution IV */}
-          {ivSummary && (
-            <div className="iv-summary-row">
-              {Object.entries(ivSummary).filter(([, n]) => n > 0).map(([label, n]) => {
-                const colors = { Inutile: '#9ca3af', Faible: '#f59e0b', Moyen: '#3b82f6', Fort: '#10b981', Suspect: '#ef4444' }
-                return (
-                  <div key={label} className="iv-summary-chip" style={{ borderColor: colors[label] }}>
-                    <span style={{ color: colors[label], fontWeight: 700 }}>{n}</span>
-                    <span>{label}</span>
-                  </div>
-                )
-              })}
-            </div>
-          )}
-
-          {/* Légende IV */}
-          <div className="iv-legend">
-            <span>IV :</span>
-            {[['< 0.02', '#9ca3af', 'Inutile'], ['0.02–0.1', '#f59e0b', 'Faible'],
-              ['0.1–0.3', '#3b82f6', 'Moyen'], ['0.3–0.5', '#10b981', 'Fort'], ['> 0.5', '#ef4444', 'Suspect']
-            ].map(([range, color, label]) => (
-              <span key={label} className="iv-legend-item">
-                <span className="iv-legend-dot" style={{ background: color }} />
-                {label} ({range})
-              </span>
-            ))}
-          </div>
-
-          {/* Table des variables */}
-          <div className="woe-features-list">
-            {Object.entries(woeReport).map(([col, info]) => (
-              <div key={col} className="woe-feature-row">
-                <div
-                  className="woe-feature-header"
-                  onClick={() => toggleExpand(col)}
-                >
-                  <div className="woe-feature-left">
-                    <span className="woe-feature-name">{col}</span>
-                    <span className="woe-type-chip">{info.var_type}</span>
-                    {info.has_missing_bin && (
-                      <span className="woe-missing-chip">bin manquant</span>
-                    )}
-                  </div>
-                  <div className="woe-feature-right">
-                    <div className="woe-iv-bar-wrap">
-                      <div
-                        className="woe-iv-bar"
-                        style={{
-                          width: `${Math.min(info.iv / 0.5 * 100, 100)}%`,
-                          background: info.iv_color,
-                        }}
-                      />
-                    </div>
-                    <IVBadge label={info.iv_label} color={info.iv_color} iv={info.iv} />
-                    <span className="woe-expand-icon">{expandedCol === col ? '▲' : '▼'}</span>
-                  </div>
-                </div>
-
-                {expandedCol === col && (
-                  <WoeBinTable bins={info.bins} />
+              <div className="train-config-field">
+                <label className="train-check-label">
+                  <input
+                    type="checkbox"
+                    checked={trainConfig.usePca}
+                    onChange={e => setTrainConfig(c => ({ ...c, usePca: e.target.checked }))}
+                  />
+                  Appliquer l'ACP (auto 95% variance)
+                </label>
+                {trainConfig.usePca && (
+                  <input
+                    className="train-ncomp-input"
+                    type="number"
+                    placeholder="Nombre de composantes (auto si vide)"
+                    min={1}
+                    value={trainConfig.nComponents ?? ''}
+                    onChange={e => setTrainConfig(c => ({
+                      ...c, nComponents: e.target.value ? parseInt(e.target.value) : null
+                    }))}
+                  />
                 )}
               </div>
-            ))}
+              <button
+                className="btn-train-run"
+                style={{ '--btnc': '#f59e0b' }}
+                disabled={Object.values(trainRunning).some(Boolean)}
+                onClick={() => Object.entries(trainConfig.rawModels).forEach(([m, en]) => {
+                  if (en) trainModel(m)
+                })}
+              >
+                ↺ Relancer tree-based
+              </button>
+            </div>
           </div>
 
-          {/* Dataset transformé WOE */}
-          {woePreview && woeColumns.length > 0 && (
-            <WoeDatasetPreview
-              columns={woeColumns}
-              preview={woePreview}
-              targetCol={selectedTarget}
-            />
+          {phase === 'ready' && Object.keys(trainResults).length === 0 && (
+            <button className="btn-dm-launch" onClick={launchTraining}>
+              Entraîner tous les modèles →
+            </button>
           )}
 
-          <button className="btn-dm-back" onClick={() => setPhase('target')}>
-            ← Changer de cible
-          </button>
+          {/* Résultats */}
+          <div className="train-results-grid">
+            {['logit', 'xgboost', 'lightgbm', 'random_forest'].map(m => {
+              const hasResult = !!trainResults[m]
+              const hasError  = !!trainErrors[m]
+              const isRunning = !!trainRunning[m]
+              if (!hasResult && !hasError && !isRunning) return null
+              return (
+                <ModelResultCard
+                  key={m}
+                  modelType={m}
+                  result={trainResults[m]}
+                  error={trainErrors[m]}
+                  running={isRunning}
+                />
+              )
+            })}
+          </div>
         </div>
       )}
     </div>
