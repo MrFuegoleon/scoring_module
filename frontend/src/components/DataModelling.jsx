@@ -270,6 +270,88 @@ function RocCurve({ roc, color = '#6366f1', label }) {
   )
 }
 
+// ── Lift Curve SVG ────────────────────────────────────────────────────────────
+function LiftCurve({ liftData, color = '#6366f1' }) {
+  if (!liftData || !liftData.x) return null
+  const W = 260, H = 160, PAD = 24
+  const { x, lift } = liftData
+  const maxLift = Math.max(...lift, 1)
+
+  const d = lift.map((v, i) => {
+    const sx = PAD + x[i] * (W - 2 * PAD)
+    const sy = H - PAD - (v / maxLift) * (H - 2 * PAD)
+    return `${i === 0 ? 'M' : 'L'}${sx.toFixed(1)},${sy.toFixed(1)}`
+  }).join(' ')
+
+  const baselineY = H - PAD - (1 / maxLift) * (H - 2 * PAD)
+
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`} className="roc-svg--full">
+      <line x1={PAD} y1={PAD - 4} x2={PAD} y2={H - PAD} stroke="#d1d5db" strokeWidth="1" />
+      <line x1={PAD} y1={H - PAD} x2={W - PAD + 4} y2={H - PAD} stroke="#d1d5db" strokeWidth="1" />
+      {/* lift = 1 (aléatoire) */}
+      <line x1={PAD} y1={baselineY} x2={W - PAD} y2={baselineY}
+            stroke="#9ca3af" strokeWidth="1.5" strokeDasharray="6,4" />
+      <text x={W - PAD - 2} y={baselineY - 3} fontSize="8" fill="#9ca3af" textAnchor="end">aléatoire</text>
+      <path d={d} fill="none" stroke={color} strokeWidth="2" />
+      <text x={PAD + 2} y={PAD + 9} fontSize="8" fill="#9ca3af">{maxLift.toFixed(1)}×</text>
+      <text x={PAD}               y={H - PAD + 11} fontSize="8" fill="#9ca3af" textAnchor="middle">0%</text>
+      <text x={PAD + (W-2*PAD)/2} y={H - PAD + 11} fontSize="8" fill="#9ca3af" textAnchor="middle">50%</text>
+      <text x={W - PAD}           y={H - PAD + 11} fontSize="8" fill="#9ca3af" textAnchor="middle">100%</text>
+    </svg>
+  )
+}
+
+// ── Probability Distribution KDE ─────────────────────────────────────────────
+function ProbDistribution({ dist }) {
+  if (!dist || !dist.group_0) return null
+  const W = 260, H = 160, PAD = 24
+  const kde_0 = dist.group_0
+  const kde_1 = dist.group_1
+  const x = dist.x ?? Array.from({ length: kde_0.length }, (_, i) => i / (kde_0.length - 1))
+  const maxD = Math.max(...kde_0, ...kde_1) || 1
+  const C0 = '#10b981', C1 = '#ef4444'
+
+  function toPoints(kde) {
+    return kde.map((d, i) => [
+      PAD + x[i] * (W - 2 * PAD),
+      H - PAD - (d / maxD) * (H - 2 * PAD),
+    ])
+  }
+
+  function linePath(pts) {
+    return pts.map((p, i) => `${i === 0 ? 'M' : 'L'}${p[0].toFixed(1)},${p[1].toFixed(1)}`).join(' ')
+  }
+
+  function areaPath(pts) {
+    const first = pts[0], last = pts[pts.length - 1]
+    return `M${first[0].toFixed(1)},${H - PAD} `
+      + pts.map(p => `L${p[0].toFixed(1)},${p[1].toFixed(1)}`).join(' ')
+      + ` L${last[0].toFixed(1)},${H - PAD} Z`
+  }
+
+  const p0 = toPoints(kde_0)
+  const p1 = toPoints(kde_1)
+
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`} className="roc-svg--full">
+      <line x1={PAD} y1={PAD - 4} x2={PAD} y2={H - PAD} stroke="#d1d5db" strokeWidth="1" />
+      <line x1={PAD} y1={H - PAD} x2={W - PAD + 4} y2={H - PAD} stroke="#d1d5db" strokeWidth="1" />
+      <path d={areaPath(p0)} fill={C0} fillOpacity="0.15" />
+      <path d={areaPath(p1)} fill={C1} fillOpacity="0.15" />
+      <path d={linePath(p0)} fill="none" stroke={C0} strokeWidth="1.8" />
+      <path d={linePath(p1)} fill="none" stroke={C1} strokeWidth="1.8" />
+      <rect x={W - PAD - 72} y={PAD}      width="7" height="7" rx="1" fill={C0} />
+      <text x={W - PAD - 61} y={PAD + 6.5} fontSize="9" fill="#6b7280">Non-Churn</text>
+      <rect x={W - PAD - 72} y={PAD + 13} width="7" height="7" rx="1" fill={C1} />
+      <text x={W - PAD - 61} y={PAD + 19.5} fontSize="9" fill="#6b7280">Churn</text>
+      <text x={PAD}               y={H - PAD + 11} fontSize="8" fill="#9ca3af" textAnchor="middle">0</text>
+      <text x={PAD + (W-2*PAD)/2} y={H - PAD + 11} fontSize="8" fill="#9ca3af" textAnchor="middle">0.5</text>
+      <text x={W - PAD}           y={H - PAD + 11} fontSize="8" fill="#9ca3af" textAnchor="middle">1</text>
+    </svg>
+  )
+}
+
 // ── Confusion Matrix ──────────────────────────────────────────────────────────
 function ConfusionMatrix({ cm }) {
   if (!cm) return null
@@ -353,7 +435,8 @@ function ModelResultCard({ modelType, result, error, running }) {
 
       {result && !running && (
         <>
-          {/* Métriques principales */}
+          {/* Métriques CV (train) */}
+          <div className="model-metrics-section-label">Validation croisée (train)</div>
           <div className="model-metrics-row">
             {[['AUC', result.results.auc],
               ['Gini', result.results.gini],
@@ -367,9 +450,24 @@ function ModelResultCard({ modelType, result, error, running }) {
             ))}
           </div>
 
+          {/* Métriques test (hold-out) */}
+          <div className="model-metrics-section-label">Test set (hold-out)</div>
+          <div className="model-metrics-row">
+            {[['AUC', result.results.auc_test],
+              ['Gini', result.results.gini_test],
+              ['KS',   result.results.ks_test]].map(([k, v]) => (
+              <div key={k} className="model-metric-chip model-metric-chip--test">
+                <span className="model-metric-val" style={{ color: meta.color }}>
+                  {(v * 100).toFixed(1)}%
+                </span>
+                <span className="model-metric-label">{k}</span>
+              </div>
+            ))}
+          </div>
+
           {/* Tabs */}
           <div className="model-tabs">
-            {[['metrics', 'ROC + Matrice'], ['importance', 'Variables']].map(([k, l]) => (
+            {[['metrics', 'ROC + Matrice'], ['importance', 'Variables'], ['distribution', 'Distribution'], ['lift', 'Lift']].map(([k, l]) => (
               <button
                 key={k}
                 className={`model-tab ${tab === k ? 'active' : ''}`}
@@ -389,7 +487,7 @@ function ModelResultCard({ modelType, result, error, running }) {
                 <div className="model-detail-label">Matrice de confusion</div>
                 <ConfusionMatrix cm={result.results.confusion_matrix} />
                 <div className="model-cv-note">
-                  CV {result.results.cv_folds} folds · {result.results.n_samples} obs · {result.results.n_features} features
+                  CV {result.results.cv_folds} folds · train {result.results.n_train} obs · test {result.results.n_test} obs · {result.results.n_features} features
                 </div>
                 {result.pca_report && (
                   <div className="model-pca-note">
@@ -406,6 +504,17 @@ function ModelResultCard({ modelType, result, error, running }) {
               features={result.results.feature_importance}
               impType={result.results.importance_type}
             />
+          )}
+
+          {tab === 'distribution' && (
+            <div>
+              <div className="model-detail-label">Distribution des probabilités — test set</div>
+              <ProbDistribution dist={result.results.prob_distribution} />
+            </div>
+          )}
+
+          {tab === 'lift' && (
+            <LiftCurve liftData={result.results.lift_curve} color={meta.color} />
           )}
         </>
       )}

@@ -2,12 +2,13 @@ import numpy as np
 import pandas as pd
 from sklearn.linear_model import LogisticRegression
 from sklearn.ensemble import RandomForestClassifier
-from sklearn.model_selection import StratifiedKFold, cross_val_predict
+from sklearn.model_selection import StratifiedKFold, cross_val_predict, train_test_split
 from sklearn.preprocessing import LabelEncoder
 from sklearn.decomposition import PCA
 from sklearn.impute import SimpleImputer
 from sklearn.metrics import roc_auc_score, roc_curve, confusion_matrix
 from sklearn.utils.multiclass import unique_labels
+from scipy.stats import gaussian_kde
 
 try:
     import xgboost as xgb
@@ -145,6 +146,17 @@ class TrainingService:
         }
 
     # ── Métriques ─────────────────────────────────────────────────────────────
+
+    @staticmethod
+    def _safe_kde(data: np.ndarray, x: np.ndarray) -> np.ndarray:
+        try:
+            return gaussian_kde(data)(x)
+        except np.linalg.LinAlgError:
+            # Variance quasi-nulle (proba concentrées) → jitter pour régulariser
+            rng = np.random.default_rng(42)
+            jittered = np.clip(data + rng.normal(0, 1e-4, size=len(data)), 0, 1)
+            return gaussian_kde(jittered)(x)
+
     @staticmethod
     def _ks(y_true, y_prob):
         fpr, tpr, _ = roc_curve(y_true, y_prob)
@@ -161,12 +173,20 @@ class TrainingService:
     # ── Entraînement + évaluation ─────────────────────────────────────────────
     @staticmethod
     def train_and_evaluate(X: pd.DataFrame, y: pd.Series,
-                           model_type: str, cv_folds: int = 5) -> dict:
+                           model_type: str, cv_folds: int = 5,
+                           test_size: float = 0.2) -> dict:
         X_arr = X.values.astype(float)
         y_arr = np.array(y, dtype=int)
 
-        imp   = SimpleImputer(strategy='median')
-        X_arr = imp.fit_transform(X_arr)
+        # Split train / test avant toute transformation
+        X_train, X_test, y_train, y_test = train_test_split(
+            X_arr, y_arr, test_size=test_size, stratify=y_arr, random_state=42
+        )
+
+        # Imputation ajustée sur le train uniquement
+        imp     = SimpleImputer(strategy='median')
+        X_train = imp.fit_transform(X_train)
+        X_test  = imp.transform(X_test)
 
         if model_type == 'logit':
             model = LogisticRegression(max_iter=1000, random_state=42, solver='lbfgs')
@@ -184,23 +204,57 @@ class TrainingService:
         else:
             raise ValueError(f"Modèle inconnu : {model_type}")
 
-        cv     = StratifiedKFold(n_splits=cv_folds, shuffle=True, random_state=42)
-        y_prob = cross_val_predict(model, X_arr, y_arr, cv=cv,
-                                   method='predict_proba')[:, 1]
-        y_pred = (y_prob >= 0.5).astype(int)
+        # Validation croisée sur le train set uniquement
+        cv          = StratifiedKFold(n_splits=cv_folds, shuffle=True, random_state=42)
+        y_prob_cv   = cross_val_predict(model, X_train, y_train, cv=cv,
+                                        method='predict_proba')[:, 1]
+        auc_cv  = round(float(roc_auc_score(y_train, y_prob_cv)), 4)
+        gini_cv = round(2 * auc_cv - 1, 4)
+        ks_cv   = TrainingService._ks(y_train, y_prob_cv)
 
-        auc  = round(float(roc_auc_score(y_arr, y_prob)), 4)
-        gini = round(2 * auc - 1, 4)
-        ks   = TrainingService._ks(y_arr, y_prob)
+        # Entraînement final sur le train set complet
+        model.fit(X_train, y_train)
 
-        fpr, tpr, _ = roc_curve(y_arr, y_prob)
+        # Évaluation sur le test set (données jamais vues)
+        y_prob_test = model.predict_proba(X_test)[:, 1]
+        y_pred_test = (y_prob_test >= 0.5).astype(int)
+        
+        # Distributions des probas prédites pour les classes 0 et 1
+
+        x = np.linspace(0,1,200)
+
+        prob_0 = y_prob_test[y_test == 0]
+        prob_1 = y_prob_test[y_test == 1]
+
+        group_0 = TrainingService._safe_kde(prob_0, x)
+        group_1 = TrainingService._safe_kde(prob_1, x)
+
+        # ----------------------------------------------------------
+        # Courbe lift et gain
+
+        order           = np.argsort(y_prob_test)[::-1]
+        y_sorted        = y_test[order]
+        cum_positives   = np.cumsum(y_sorted)
+        total_positives = cum_positives[-1]
+        cum_pct_samples = np.arange(1, len(y_test) + 1) / len(y_test)
+        cum_pct_pos     = cum_positives / total_positives if total_positives > 0 else np.zeros_like(cum_positives, dtype=float)
+        lift            = cum_pct_pos / cum_pct_samples
+
+        idx_lift = np.linspace(0, len(cum_pct_samples) - 1, 100).astype(int)
+
+        # ----------------------------------------------------------
+
+
+        auc_test  = round(float(roc_auc_score(y_test, y_prob_test)), 4)
+        gini_test = round(2 * auc_test - 1, 4)
+        ks_test   = TrainingService._ks(y_test, y_prob_test)
+
+        fpr, tpr, _ = roc_curve(y_test, y_prob_test)
         roc = TrainingService._roc_sample(fpr, tpr)
-        cm  = confusion_matrix(y_arr, y_pred).tolist()
+        cm  = confusion_matrix(y_test, y_pred_test).tolist()
 
-        # Importance (entraînement complet)
-        model.fit(X_arr, y_arr)
+        # Importance des features
         feat_names = list(X.columns)
-
         if hasattr(model, 'coef_'):
             raw_imp  = [float(abs(v)) for v in model.coef_[0]]
             imp_type = 'Coefficient |β|'
@@ -219,14 +273,30 @@ class TrainingService:
 
         return {
             'model_type':         model_type,
-            'auc':                auc,
-            'gini':               gini,
-            'ks':                 ks,
+            # Métriques CV (train set)
+            'auc':                auc_cv,
+            'gini':               gini_cv,
+            'ks':                 ks_cv,
+            # Métriques test set (hold-out)
+            'auc_test':           auc_test,
+            'gini_test':          gini_test,
+            'ks_test':            ks_test,
             'confusion_matrix':   cm,
             'roc_curve':          roc,
             'feature_importance': feature_importance,
             'importance_type':    imp_type,
-            'n_features':         X_arr.shape[1],
+            'n_features':         X_train.shape[1],
             'n_samples':          int(len(y_arr)),
+            'n_train':            int(len(y_train)),
+            'n_test':             int(len(y_test)),
             'cv_folds':           cv_folds,
+            'prob_distribution': {
+                'x': [round(float(v), 4) for v in x],
+                'group_0': [round(float(p), 4) for p in group_0],
+                'group_1': [round(float(p), 4) for p in group_1],
+            },
+            'lift_curve': {
+                'x':    [round(float(cum_pct_samples[i]), 4) for i in idx_lift],
+                'lift': [round(float(lift[i]),            4) for i in idx_lift],
+            },
         }

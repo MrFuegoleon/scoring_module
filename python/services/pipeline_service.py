@@ -29,7 +29,7 @@ class PipelineService:
 
         # 3. Catégoriques : NaN → 'unknown'
         for col in cat_cols:
-            df[col] = df[col].astype(object).fillna('unknown').astype(str)
+            df[col] = df[col].astype(object).fillna('unknown').infer_objects(copy=False).astype(str)
 
         # 4. WOE sur toutes les features
         woe_report = ModellingService.compute_woe_iv(df, target_col, n_bins=n_bins)
@@ -77,7 +77,7 @@ class PipelineService:
 
         # 3. Catégoriques : NaN → 'unknown'
         for col in cat_cols:
-            df[col] = df[col].astype(object).fillna('unknown').astype(str)
+            df[col] = df[col].astype(object).fillna('unknown').infer_objects(copy=False).astype(str)
 
         # 4. Calcul de y binaire pour Target Encoding
         target_series = df[target_col].dropna()

@@ -1,5 +1,9 @@
+setuptools<80
 flask
 pandas
 ydata-profiling
 pdfplumber
 python-docx
+scikit-learn
+xgboost
+lightgbm
