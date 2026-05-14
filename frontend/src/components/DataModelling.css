@@ -695,6 +695,56 @@
   display: block;
 }
 
+/* ── Rééchantillonnage ───────────────────────────────────────────────────── */
+.train-resample-row {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 0.65rem 1rem;
+  background: #f8fafc;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  margin-bottom: 1rem;
+  flex-wrap: wrap;
+}
+.train-resample-label {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: #374151;
+  white-space: nowrap;
+}
+.train-resample-options {
+  display: flex;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+}
+.train-resample-chip {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.25rem 0.65rem;
+  border: 1px solid #e5e7eb;
+  border-radius: 20px;
+  font-size: 0.78rem;
+  cursor: pointer;
+  color: #6b7280;
+  background: #fff;
+  transition: all .15s;
+}
+.train-resample-chip input { display: none; }
+.train-resample-chip.active {
+  background: #ede9fe;
+  border-color: #a78bfa;
+  color: #6d28d9;
+  font-weight: 600;
+}
+.model-resample-note {
+  margin-top: 0.3rem;
+  font-size: 0.72rem;
+  color: #7c3aed;
+  font-weight: 500;
+}
+
 /* ── Confusion Matrix ────────────────────────────────────────────────────── */
 .conf-matrix        { display: flex; flex-direction: column; gap: 0.2rem; }
 .conf-matrix-label-row { display: grid; grid-template-columns: 60px 1fr 1fr; gap: 0.2rem; }

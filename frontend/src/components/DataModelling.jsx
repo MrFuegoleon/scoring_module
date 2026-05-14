@@ -489,6 +489,14 @@ function ModelResultCard({ modelType, result, error, running }) {
                 <div className="model-cv-note">
                   CV {result.results.cv_folds} folds · train {result.results.n_train} obs · test {result.results.n_test} obs · {result.results.n_features} features
                 </div>
+                {result.results.resampling && result.results.resampling.method !== 'none' && (
+                  <div className="model-resample-note">
+                    {result.results.resampling.method === 'undersample' && '⬇ Sous-échantillonnage'}
+                    {result.results.resampling.method === 'oversample'  && '⬆ SMOTE'}
+                    {result.results.resampling.method === 'combined'    && '⇅ SMOTE + Tomek'}
+                    {' '}· {result.results.resampling.n_before.toLocaleString()} → {result.results.resampling.n_after.toLocaleString()} obs
+                  </div>
+                )}
                 {result.pca_report && (
                   <div className="model-pca-note">
                     ACP : {result.pca_report.n_components} composantes
@@ -534,6 +542,7 @@ export default function DataModelling({ cleaningSession }) {
     rawModels:   { xgboost: true, lightgbm: true, random_forest: true },
     usePca:      false,
     nComponents: null,
+    resampling:  'none',
   })
   const [trainResults, setTrainResults] = useState({})
   const [trainRunning, setTrainRunning] = useState({})
@@ -591,6 +600,7 @@ export default function DataModelling({ cleaningSession }) {
     fd.append('session_id', cleaningSession)
     fd.append('model_type', modelType)
     fd.append('use_pca',    String(trainConfig.usePca))
+    fd.append('resampling', trainConfig.resampling)
     if (trainConfig.nComponents) fd.append('n_components', String(trainConfig.nComponents))
 
     try {
@@ -779,6 +789,30 @@ export default function DataModelling({ cleaningSession }) {
               >
                 ↺ Relancer tree-based
               </button>
+            </div>
+          </div>
+
+          {/* Rééchantillonnage */}
+          <div className="train-resample-row">
+            <span className="train-resample-label">Rééchantillonnage</span>
+            <div className="train-resample-options">
+              {[
+                ['none',        'Aucun'],
+                ['undersample', 'Sous-échantillonnage'],
+                ['oversample',  'Sur-échantillonnage (SMOTE)'],
+                ['combined',    'Combiné (SMOTE + Tomek)'],
+              ].map(([val, lbl]) => (
+                <label key={val} className={`train-resample-chip ${trainConfig.resampling === val ? 'active' : ''}`}>
+                  <input
+                    type="radio"
+                    name="resampling"
+                    value={val}
+                    checked={trainConfig.resampling === val}
+                    onChange={() => setTrainConfig(c => ({ ...c, resampling: val }))}
+                  />
+                  {lbl}
+                </label>
+              ))}
             </div>
           </div>
 

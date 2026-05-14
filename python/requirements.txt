@@ -7,3 +7,4 @@ python-docx
 scikit-learn
 xgboost
 lightgbm
+imbalanced-learn

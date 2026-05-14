@@ -94,7 +94,8 @@ def train_model():
         use_pca      = request.form.get('use_pca', 'false').lower() == 'true'
         n_comp_raw   = request.form.get('n_components')
         n_components = int(n_comp_raw) if n_comp_raw else None
-    
+        resampling   = request.form.get('resampling', 'none')
+
         if not session_id or not model_type:
             return jsonify({"error": "Paramètres manquants (session_id, model_type)"}), 400
 
@@ -118,7 +119,7 @@ def train_model():
         if use_pca and pipeline == 'tree':
             X, pca_report = TrainingService.apply_pca(X, n_components)
 
-        results = TrainingService.train_and_evaluate(X, y, model_type)
+        results = TrainingService.train_and_evaluate(X, y, model_type, resampling=resampling)
 
         response = {
             'success':       True,

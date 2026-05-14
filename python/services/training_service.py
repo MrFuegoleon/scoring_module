@@ -11,6 +11,13 @@ from sklearn.utils.multiclass import unique_labels
 from scipy.stats import gaussian_kde
 
 try:
+    from imblearn.over_sampling import SMOTE
+    from imblearn.under_sampling import RandomUnderSampler
+    HAS_IMBLEARN = True
+except ImportError:
+    HAS_IMBLEARN = False
+
+try:
     import xgboost as xgb
     HAS_XGB = True
 except ImportError:
@@ -174,7 +181,8 @@ class TrainingService:
     @staticmethod
     def train_and_evaluate(X: pd.DataFrame, y: pd.Series,
                            model_type: str, cv_folds: int = 5,
-                           test_size: float = 0.2) -> dict:
+                           test_size: float = 0.2,
+                           resampling: str = 'none') -> dict:
         X_arr = X.values.astype(float)
         y_arr = np.array(y, dtype=int)
 
@@ -187,6 +195,20 @@ class TrainingService:
         imp     = SimpleImputer(strategy='median')
         X_train = imp.fit_transform(X_train)
         X_test  = imp.transform(X_test)
+
+        resampling_info = {'method': resampling, 'n_before': int(len(y_train)), 'n_after': int(len(y_train))}
+
+        if resampling != 'none' and not HAS_IMBLEARN:
+            raise ValueError("imbalanced-learn non installé — pip install imbalanced-learn")
+
+        def _make_sampler():
+            if resampling == 'undersample':
+                return RandomUnderSampler(random_state=42)
+            elif resampling == 'oversample':
+                return SMOTE(random_state=42)
+            elif resampling == 'combined':
+                from imblearn.combine import SMOTETomek
+                return SMOTETomek(random_state=42)
 
         if model_type == 'logit':
             model = LogisticRegression(max_iter=1000, random_state=42, solver='lbfgs')
@@ -204,16 +226,26 @@ class TrainingService:
         else:
             raise ValueError(f"Modèle inconnu : {model_type}")
 
-        # Validation croisée sur le train set uniquement
-        cv          = StratifiedKFold(n_splits=cv_folds, shuffle=True, random_state=42)
-        y_prob_cv   = cross_val_predict(model, X_train, y_train, cv=cv,
-                                        method='predict_proba')[:, 1]
+        # Validation croisée — SMOTE appliqué à l'intérieur de chaque fold
+        cv = StratifiedKFold(n_splits=cv_folds, shuffle=True, random_state=42)
+        if resampling != 'none':
+            from imblearn.pipeline import Pipeline as ImbPipeline
+            cv_estimator = ImbPipeline([('sampler', _make_sampler()), ('model', model)])
+        else:
+            cv_estimator = model
+        y_prob_cv = cross_val_predict(cv_estimator, X_train, y_train, cv=cv,
+                                      method='predict_proba')[:, 1]
         auc_cv  = round(float(roc_auc_score(y_train, y_prob_cv)), 4)
         gini_cv = round(2 * auc_cv - 1, 4)
         ks_cv   = TrainingService._ks(y_train, y_prob_cv)
 
-        # Entraînement final sur le train set complet
-        model.fit(X_train, y_train)
+        # Entraînement final — rééchantillonnage sur le train complet
+        if resampling != 'none':
+            X_train_fit, y_train_fit = _make_sampler().fit_resample(X_train, y_train)
+            resampling_info['n_after'] = int(len(y_train_fit))
+            model.fit(X_train_fit, y_train_fit)
+        else:
+            model.fit(X_train, y_train)
 
         # Évaluation sur le test set (données jamais vues)
         y_prob_test = model.predict_proba(X_test)[:, 1]
@@ -290,6 +322,7 @@ class TrainingService:
             'n_train':            int(len(y_train)),
             'n_test':             int(len(y_test)),
             'cv_folds':           cv_folds,
+            'resampling':         resampling_info,
             'prob_distribution': {
                 'x': [round(float(v), 4) for v in x],
                 'group_0': [round(float(p), 4) for p in group_0],
