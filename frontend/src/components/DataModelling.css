@@ -307,6 +307,85 @@
 .dm-section-header {
   margin-bottom: 1.25rem;
 }
+
+/* ── Datamart Inspector ──────────────────────────────────────────────────── */
+.dm-inspector {
+  border: 1px solid #e5e7eb;
+  border-radius: 10px;
+  margin-bottom: 1.5rem;
+  overflow: hidden;
+}
+.dm-inspector-toggle {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.75rem 1rem;
+  background: #f9fafb;
+  border: none;
+  cursor: pointer;
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: #374151;
+  gap: 0.75rem;
+}
+.dm-inspector-toggle:hover { background: #f3f4f6; }
+.dm-inspector-toggle-right {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+.dm-inspector-body {
+  padding: 1rem;
+  border-top: 1px solid #e5e7eb;
+}
+.dm-insp-tabs {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 1rem;
+  flex-wrap: wrap;
+}
+.dm-insp-tab {
+  padding: 0.35rem 0.9rem;
+  border-radius: 6px;
+  border: 1px solid #e5e7eb;
+  background: #fff;
+  font-size: 0.82rem;
+  font-weight: 500;
+  color: #6b7280;
+  cursor: pointer;
+}
+.dm-insp-tab.active {
+  background: #6366f1;
+  border-color: #6366f1;
+  color: #fff;
+}
+.dm-insp-download {
+  margin-left: auto;
+  padding: 0.35rem 0.85rem;
+  border-radius: 6px;
+  border: 1px solid #10b981;
+  background: #f0fdf4;
+  color: #10b981;
+  font-size: 0.82rem;
+  font-weight: 500;
+  text-decoration: none;
+}
+.dm-insp-download:hover { background: #dcfce7; }
+.dm-insp-loading {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 1rem;
+  color: #6b7280;
+  font-size: 0.85rem;
+}
+.dm-insp-stats {
+  display: flex;
+  gap: 0.5rem;
+  margin-bottom: 0.75rem;
+}
 .dm-section-header h2 {
   font-size: 1.1rem;
   font-weight: 700;
@@ -738,6 +817,12 @@
   color: #6d28d9;
   font-weight: 600;
 }
+.model-tuning-note {
+  margin-top: 0.3rem;
+  font-size: 0.72rem;
+  color: #0891b2;
+  font-weight: 500;
+}
 .model-resample-note {
   margin-top: 0.3rem;
   font-size: 0.72rem;
@@ -797,3 +882,95 @@
 }
 
 @keyframes spin { to { transform: rotate(360deg); } }
+
+/* ── Threshold note ──────────────────────────────────────────────────────── */
+.model-threshold-note {
+  margin-top: 0.4rem;
+  padding: 0.4rem 0.65rem;
+  background: #fef3c7;
+  border: 1px solid #fcd34d;
+  border-radius: 6px;
+  font-size: 0.75rem;
+  color: #92400e;
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+}
+.model-threshold-hint {
+  font-size: 0.7rem;
+  color: #b45309;
+  font-weight: 400;
+}
+
+/* ── Dataset diagnostic ──────────────────────────────────────────────────── */
+.dataset-diagnostic {
+  background: #f9fafb;
+  border: 1px solid #e5e7eb;
+  border-radius: 10px;
+  padding: 0.85rem 1.1rem;
+  margin-bottom: 1.25rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+.diagnostic-header {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+.diagnostic-icon { font-size: 1.05rem; }
+.diagnostic-title {
+  font-size: 0.82rem;
+  font-weight: 700;
+  color: #374151;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+}
+.diagnostic-row {
+  display: flex;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+}
+.diagnostic-chip {
+  border: 1.5px solid #e5e7eb;
+  border-radius: 8px;
+  padding: 0.4rem 0.75rem;
+  background: #fff;
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  min-width: 140px;
+}
+.diagnostic-chip-label {
+  font-size: 0.68rem;
+  color: #9ca3af;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  font-weight: 600;
+}
+.diagnostic-chip-val {
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: #374151;
+}
+.diagnostic-chip-hint {
+  font-size: 0.7rem;
+  color: #9ca3af;
+  font-weight: 400;
+}
+.diagnostic-warnings {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  padding-top: 0.4rem;
+  border-top: 1px dashed #e5e7eb;
+}
+.diagnostic-warning {
+  font-size: 0.75rem;
+  color: #b45309;
+  background: #fffbeb;
+  padding: 0.3rem 0.55rem;
+  border-radius: 5px;
+  border-left: 3px solid #f59e0b;
+}

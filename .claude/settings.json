@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -c \"import ast; ast.parse\\(open\\('../scripts/dataset_diagnostic.py'\\).read\\(\\)\\); print\\('syntax ok'\\)\")",
+      "Bash(python -c ' *)"
+    ]
+  }
+}

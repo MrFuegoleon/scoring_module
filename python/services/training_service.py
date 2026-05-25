@@ -2,12 +2,11 @@ import numpy as np
 import pandas as pd
 from sklearn.linear_model import LogisticRegression
 from sklearn.ensemble import RandomForestClassifier
-from sklearn.model_selection import StratifiedKFold, cross_val_predict, train_test_split
+from sklearn.model_selection import StratifiedKFold, cross_val_predict, train_test_split, RandomizedSearchCV
 from sklearn.preprocessing import LabelEncoder
 from sklearn.decomposition import PCA
 from sklearn.impute import SimpleImputer
-from sklearn.metrics import roc_auc_score, roc_curve, confusion_matrix
-from sklearn.utils.multiclass import unique_labels
+from sklearn.metrics import roc_auc_score, roc_curve, confusion_matrix, f1_score, balanced_accuracy_score
 from scipy.stats import gaussian_kde
 
 try:
@@ -30,6 +29,46 @@ except ImportError:
     HAS_LGB = False
 
 
+PARAM_GRIDS = {
+    'logit': {
+        'C': [0.001, 0.01, 0.1, 1, 10, 100],
+        'penalty': ['l1', 'l2'],
+        'solver': ['liblinear', 'saga'],          # supportent l1 et l2
+        'max_iter': [500, 1000, 2000],            # 'auto' n'existe pas pour LogisticRegression
+        'class_weight': [None, 'balanced'],
+    },
+    'random_forest': {
+        'n_estimators': [100, 200, 400],
+        'max_depth': [None, 10, 20, 30],
+        'min_samples_split': [2, 5, 10],
+        'min_samples_leaf': [1, 2, 4],            # régularise mieux que split seul
+        'max_features': ['sqrt', 'log2', 0.5],    # diversité réelle
+        'class_weight': [None, 'balanced'],
+    },
+    'xgboost': {
+        'n_estimators': [100, 200, 400],
+        'max_depth': [3, 5, 7, 9],
+        'learning_rate': [0.01, 0.05, 0.1, 0.2],
+        'subsample': [0.7, 0.8, 1.0],
+        'colsample_bytree': [0.7, 0.8, 1.0],
+        'min_child_weight': [1, 3, 5],
+        'gamma': [0, 0.1, 0.3],
+        'reg_alpha': [0, 0.1, 1],
+    },
+    'lightgbm': {
+        'n_estimators': [100, 200, 400],
+        'max_depth': [-1, 5, 10],
+        'learning_rate': [0.01, 0.05, 0.1],
+        'num_leaves': [15, 31, 63, 127],
+        'min_child_samples': [10, 20, 50],
+        'subsample': [0.7, 0.8, 1.0],
+        'colsample_bytree': [0.7, 0.8, 1.0],
+        'reg_alpha': [0, 0.1, 1],
+        # 'importance_type' fixé dans le constructeur (n'affecte pas la perf)
+    },
+}
+
+
 def available_models():
     return {
         'logit':         {'name': 'Régression Logistique', 'pipeline': 'woe',  'available': True},
@@ -40,58 +79,6 @@ def available_models():
 
 
 class TrainingService:
-
-    # ── Pipeline WOE → Logit ──────────────────────────────────────────────────
-    @staticmethod
-    def prepare_woe_features(df: pd.DataFrame, target_col: str,
-                             woe_report: dict, iv_threshold: float = 0.02):
-        from services.modelling_service import ModellingService
-
-        selected = {
-            col: info for col, info in woe_report.items()
-            if info['iv'] >= iv_threshold and col in df.columns
-        }
-        if not selected:
-            raise ValueError(f"Aucune variable avec IV ≥ {iv_threshold}. "
-                             "Baissez le seuil ou relancez le WOE.")
-
-        target_series = df[target_col].dropna()
-        vals = sorted(target_series.unique(), key=str)
-        target_map = {vals[0]: 0, vals[1]: 1}
-        y = df[target_col].map(target_map).dropna().astype(int)
-
-        df_woe   = ModellingService.apply_woe_transform(df, target_col, selected, n_bins=10)
-        woe_cols = [c for c in df_woe.columns if c != target_col]
-        X = df_woe[woe_cols].loc[y.index].copy()
-
-        return X, y, list(selected.keys())
-
-    # ── Pipeline brut → Tree-based ────────────────────────────────────────────
-    @staticmethod
-    def prepare_raw_features(df: pd.DataFrame, target_col: str):
-        feature_cols = [c for c in df.columns if c != target_col]
-
-        target_series = df[target_col].dropna()
-        vals = sorted(target_series.unique(), key=str)
-        target_map = {vals[0]: 0, vals[1]: 1}
-        y = df[target_col].map(target_map).dropna().astype(int)
-
-        X = df[feature_cols].loc[y.index].copy()
-
-        # Exclure colonnes identifiantes (cardinalité ≥ 90%)
-        total = len(X)
-        X = X[[c for c in X.columns if X[c].nunique() / total < 0.9]]
-
-        # Encoder les colonnes non-numériques
-        for col in X.select_dtypes(exclude=[np.number]).columns:
-            le = LabelEncoder()
-            # Cast to object first — Categorical dtype blocks assignment of new values
-            X[col] = X[col].astype(object)
-            mask = X[col].notna()
-            X.loc[mask, col] = le.fit_transform(X.loc[mask, col].astype(str))
-            X[col] = pd.to_numeric(X[col], errors='coerce')
-
-        return X, y, list(X.columns)
 
     # ── Pipeline pré-encodé (datamarts pipeline_service) ─────────────────────
     @staticmethod
@@ -121,7 +108,8 @@ class TrainingService:
             X.loc[mask, col] = le.fit_transform(X.loc[mask, col].astype(str))
             X[col] = pd.to_numeric(X[col], errors='coerce')
 
-        return X, y, list(X.columns)
+        class_names = [str(vals[0]), str(vals[1])]
+        return X, y, list(X.columns), class_names
 
     # ── ACP optionnelle ───────────────────────────────────────────────────────
     @staticmethod
@@ -177,12 +165,91 @@ class TrainingService:
             'tpr': [round(float(tpr[i]), 4) for i in idx],
         }
 
+    # ── Helper : seuil de classification optimal (sans data leakage) ─────────
+    @staticmethod
+    def _find_optimal_threshold(y_true, y_prob, strategy: str = 'f1') -> float:
+        if strategy == 'youden':
+            _, tpr, thresholds = roc_curve(y_true, y_prob)
+            fpr, _, _          = roc_curve(y_true, y_prob)
+            return float(thresholds[np.argmax(tpr - fpr)])
+        thresholds = np.linspace(0.05, 0.95, 91)
+        if strategy == 'balanced_accuracy':
+            scores = [balanced_accuracy_score(y_true, (y_prob >= t).astype(int))
+                      for t in thresholds]
+        else:  # f1
+            scores = [f1_score(y_true, (y_prob >= t).astype(int), zero_division=0)
+                      for t in thresholds]
+        return float(thresholds[np.argmax(scores)])
+
+    # ── Helper : détection du déséquilibre des classes ────────────────────────
+    @staticmethod
+    def _detect_imbalance(y) -> dict:
+        counts         = np.bincount(y)
+        minority_ratio = float(counts.min() / counts.sum())
+        return {
+            'minority_ratio': round(minority_ratio, 4),
+            'is_imbalanced':  minority_ratio < 0.3,
+            'is_severe':      minority_ratio < 0.1,
+        }
+
+    # ── Helper : n_iter adaptatif selon la taille de la grille ───────────────
+    @staticmethod
+    def _adaptive_n_iter(grid_size, n_iter_requested: int,
+                         target_coverage: float = 0.05) -> int:
+        if grid_size == float('inf'):
+            return max(n_iter_requested, 50)
+        if grid_size <= n_iter_requested:
+            return int(grid_size)
+        return min(max(n_iter_requested, int(grid_size * target_coverage)), 300)
+
+    # ── Helper : validation du dataset + cv_folds recommandés ────────────────
+    @staticmethod
+    def _validate_dataset(X, y, min_samples: int = 50, min_per_class: int = 10) -> dict:
+        warnings_list  = []
+        counts         = np.bincount(y)
+        min_class_count = int(counts.min())
+        minority_ratio  = float(counts.min() / counts.sum())
+
+        if len(y) < min_samples:
+            raise ValueError(f"Dataset trop petit : {len(y)} obs (minimum {min_samples}).")
+        if min_class_count < min_per_class:
+            raise ValueError(
+                f"Classe minoritaire trop petite : {min_class_count} obs (minimum {min_per_class})."
+            )
+
+        stds = np.std(X, axis=0)
+        n_const = int(np.sum(stds < 1e-10))
+        if n_const > 0:
+            warnings_list.append(f"{n_const} feature(s) constante(s) détectée(s) (std < 1e-10).")
+
+        recommended_cv_folds = max(2, min(10, min_class_count // 5))
+        return {
+            'warnings':             warnings_list,
+            'recommended_cv_folds': recommended_cv_folds,
+            'minority_ratio':       round(minority_ratio, 4),
+        }
+
+    # ── Helper : taille de grille robuste aux distributions continues ────────
+    @staticmethod
+    def _compute_grid_size(grid: dict) -> float:
+        """Retourne le nombre de combinaisons. inf si distributions continues."""
+        try:
+            size = 1
+            for v in grid.values():
+                size *= len(v)
+            return size
+        except TypeError:
+            return float('inf')
+
     # ── Entraînement + évaluation ─────────────────────────────────────────────
     @staticmethod
     def train_and_evaluate(X: pd.DataFrame, y: pd.Series,
                            model_type: str, cv_folds: int = 5,
                            test_size: float = 0.2,
-                           resampling: str = 'none') -> dict:
+                           resampling: str = 'none',
+                           class_names: list = None,
+                           use_tuning: bool = False,
+                           n_iter: int = 20) -> dict:
         X_arr = X.values.astype(float)
         y_arr = np.array(y, dtype=int)
 
@@ -195,6 +262,18 @@ class TrainingService:
         imp     = SimpleImputer(strategy='median')
         X_train = imp.fit_transform(X_train)
         X_test  = imp.transform(X_test)
+
+        # ── Validation du dataset + ajustement cv_folds ──────────────────────
+        cv_folds_requested = cv_folds
+        dataset_val = TrainingService._validate_dataset(X_train, y_train)
+        if cv_folds > dataset_val['recommended_cv_folds']:
+            dataset_val['warnings'].append(
+                f"cv_folds réduit de {cv_folds} à {dataset_val['recommended_cv_folds']} "
+                f"(classe minoritaire : {int(dataset_val['minority_ratio'] * len(y_train))} obs)."
+            )
+            cv_folds = dataset_val['recommended_cv_folds']
+
+        imbalance = TrainingService._detect_imbalance(y_train)
 
         resampling_info = {'method': resampling, 'n_before': int(len(y_train)), 'n_after': int(len(y_train))}
 
@@ -210,19 +289,70 @@ class TrainingService:
                 from imblearn.combine import SMOTETomek
                 return SMOTETomek(random_state=42)
 
+        # ── RandomSearch optionnel ────────────────────────────────────────────
+        tuning_info = None
+        best_params = {}
+        if use_tuning and model_type in PARAM_GRIDS:
+            # Copie de la grille pour pouvoir l'ajuster sans toucher au global
+            grid = {k: list(v) if isinstance(v, list) else v
+                    for k, v in PARAM_GRIDS[model_type].items()}
+
+            # Éviter la double correction du déséquilibre : si rééchantillonnage
+            # actif, on force class_weight=None
+            if resampling != 'none' and 'class_weight' in grid:
+                grid['class_weight'] = [None]
+
+            if model_type == 'logit':
+                base = LogisticRegression(random_state=42)
+            elif model_type == 'random_forest':
+                base = RandomForestClassifier(random_state=42, n_jobs=-1)
+            elif model_type == 'xgboost':
+                base = xgb.XGBClassifier(random_state=42, eval_metric='logloss', verbosity=0)
+            elif model_type == 'lightgbm':
+                base = lgb.LGBMClassifier(random_state=42, verbosity=-1, importance_type='gain')
+
+            grid_size = TrainingService._compute_grid_size(grid)
+
+            search_scoring = (
+                'average_precision' if (imbalance['is_severe'] or imbalance['is_imbalanced'])
+                else 'roc_auc'
+            )
+            n_candidates = TrainingService._adaptive_n_iter(grid_size, n_iter)
+            cv_search    = StratifiedKFold(n_splits=3, shuffle=True, random_state=42)
+            search       = RandomizedSearchCV(
+                base, grid, n_iter=n_candidates, scoring=search_scoring,
+                cv=cv_search, n_jobs=-1, refit=False, random_state=42, error_score=np.nan,
+            )
+
+            search.fit(X_train, y_train)
+            best_params = search.best_params_
+            tuning_info = {
+                'strategy':     'random',
+                'scoring':      search_scoring,
+                'best_params':  best_params,
+                'best_auc_cv':  round(float(search.best_score_), 4),
+                'n_candidates': n_candidates,
+                'grid_size':    grid_size if grid_size != float('inf') else 'continuous',
+            }
+
+        # ── Construction du modèle (avec ou sans meilleurs params) ───────────
         if model_type == 'logit':
-            model = LogisticRegression(max_iter=1000, random_state=42, solver='lbfgs')
+            p = dict(best_params)
+            p.setdefault('max_iter', 1000)
+            p.setdefault('solver', 'saga')
+            p.setdefault('penalty', 'l1')
+            model = LogisticRegression(random_state=42, **p)
         elif model_type == 'random_forest':
-            model = RandomForestClassifier(n_estimators=200, random_state=42, n_jobs=-1)
+            model = RandomForestClassifier(random_state=42, n_jobs=-1, **best_params)
         elif model_type == 'xgboost':
             if not HAS_XGB:
                 raise ValueError("XGBoost non installé — pip install xgboost")
-            model = xgb.XGBClassifier(n_estimators=100, random_state=42,
-                                       eval_metric='logloss', verbosity=0)
+            model = xgb.XGBClassifier(random_state=42, eval_metric='logloss', verbosity=0, **best_params)
         elif model_type == 'lightgbm':
             if not HAS_LGB:
                 raise ValueError("LightGBM non installé — pip install lightgbm")
-            model = lgb.LGBMClassifier(n_estimators=100, random_state=42, verbosity=-1)
+            model = lgb.LGBMClassifier(random_state=42, verbosity=-1,
+                                       importance_type='gain', **best_params)
         else:
             raise ValueError(f"Modèle inconnu : {model_type}")
 
@@ -239,6 +369,9 @@ class TrainingService:
         gini_cv = round(2 * auc_cv - 1, 4)
         ks_cv   = TrainingService._ks(y_train, y_prob_cv)
 
+        # Seuil optimal calculé sur le train (CV) — jamais sur le test
+        optimal_threshold = TrainingService._find_optimal_threshold(y_train, y_prob_cv, strategy='f1')
+
         # Entraînement final — rééchantillonnage sur le train complet
         if resampling != 'none':
             X_train_fit, y_train_fit = _make_sampler().fit_resample(X_train, y_train)
@@ -249,11 +382,10 @@ class TrainingService:
 
         # Évaluation sur le test set (données jamais vues)
         y_prob_test = model.predict_proba(X_test)[:, 1]
-        y_pred_test = (y_prob_test >= 0.5).astype(int)
-        
-        # Distributions des probas prédites pour les classes 0 et 1
+        y_pred_test = (y_prob_test >= optimal_threshold).astype(int)
 
-        x = np.linspace(0,1,200)
+        # Distributions des probas prédites pour les classes 0 et 1
+        x = np.linspace(0, 1, 200)
 
         prob_0 = y_prob_test[y_test == 0]
         prob_1 = y_prob_test[y_test == 1]
@@ -263,7 +395,6 @@ class TrainingService:
 
         # ----------------------------------------------------------
         # Courbe lift et gain
-
         order           = np.argsort(y_prob_test)[::-1]
         y_sorted        = y_test[order]
         cum_positives   = np.cumsum(y_sorted)
@@ -273,9 +404,7 @@ class TrainingService:
         lift            = cum_pct_pos / cum_pct_samples
 
         idx_lift = np.linspace(0, len(cum_pct_samples) - 1, 100).astype(int)
-
         # ----------------------------------------------------------
-
 
         auc_test  = round(float(roc_auc_score(y_test, y_prob_test)), 4)
         gini_test = round(2 * auc_test - 1, 4)
@@ -314,6 +443,16 @@ class TrainingService:
             'gini_test':          gini_test,
             'ks_test':            ks_test,
             'confusion_matrix':   cm,
+            'class_names':        class_names or ['0', '1'],
+            'optimal_threshold':  round(float(optimal_threshold), 4),
+            'tuning':             tuning_info,
+            'dataset_diagnostic': {
+                'minority_ratio':     imbalance['minority_ratio'],
+                'is_imbalanced':      imbalance['is_imbalanced'],
+                'warnings':           dataset_val['warnings'],
+                'cv_folds_used':      cv_folds,
+                'cv_folds_requested': cv_folds_requested,
+            },
             'roc_curve':          roc,
             'feature_importance': feature_importance,
             'importance_type':    imp_type,
@@ -321,7 +460,7 @@ class TrainingService:
             'n_samples':          int(len(y_arr)),
             'n_train':            int(len(y_train)),
             'n_test':             int(len(y_test)),
-            'cv_folds':           cv_folds,
+            'cv_folds':           cv_folds_requested,
             'resampling':         resampling_info,
             'prob_distribution': {
                 'x': [round(float(v), 4) for v in x],

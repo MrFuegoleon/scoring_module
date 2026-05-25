@@ -83,7 +83,7 @@ class PipelineService:
         target_series = df[target_col].dropna()
         vals = sorted(target_series.unique(), key=str)
         target_map = {vals[0]: 0, vals[1]: 1}
-        y = df[target_col].map(target_map).fillna(0)
+        y = df[target_col].map(target_map).fillna(0).astype(float)
         global_mean = float(y.mean())
         N = len(df)
         m = smoothing * N  # prior count

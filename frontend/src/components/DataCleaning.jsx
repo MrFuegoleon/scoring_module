@@ -483,125 +483,6 @@ function ResultOutliers({ report }) {
 }
 
 // ── Panneau de vérification des données nettoyées ────────────────────────────
-function DataVerificationPanel({ data, onClose }) {
-  const [activeView, setActiveView] = useState('columns')
-  if (!data) return null
-
-  const { shape, col_profiles, preview } = data
-  const colEntries   = Object.entries(col_profiles || {})
-  const nMissing     = colEntries.filter(([, p]) => p.n_missing > 0).length
-  const previewCols  = preview?.length > 0 ? Object.keys(preview[0]) : []
-
-  return (
-    <div className="verification-panel">
-      <div className="verif-header">
-        <div>
-          <h2 className="verif-title">🔍 Vérification du dataset nettoyé</h2>
-          <p className="verif-sub">
-            {shape.rows} lignes · {shape.cols} colonnes
-            {nMissing > 0
-              ? <span className="verif-warn"> · ⚠ {nMissing} colonne{nMissing > 1 ? 's' : ''} avec valeurs manquantes résiduelles</span>
-              : <span className="verif-ok"> · ✓ Aucune valeur manquante</span>
-            }
-          </p>
-        </div>
-        <button className="modal-close-btn" onClick={onClose}>✕</button>
-      </div>
-
-      <div className="verif-tabs">
-        <button
-          className={`rtab ${activeView === 'columns' ? 'rtab-active' : ''}`}
-          style={activeView === 'columns' ? { '--rtab-c': '#6366f1' } : {}}
-          onClick={() => setActiveView('columns')}
-        >📋 Profil des colonnes</button>
-        <button
-          className={`rtab ${activeView === 'preview' ? 'rtab-active' : ''}`}
-          style={activeView === 'preview' ? { '--rtab-c': '#10b981' } : {}}
-          onClick={() => setActiveView('preview')}
-        >👁 Aperçu des données</button>
-      </div>
-
-      {activeView === 'columns' && (
-        <div className="verif-col-table">
-          <div className="verif-col-head">
-            <span>Colonne</span>
-            <span>Type final</span>
-            <span>Taux de remplissage</span>
-            <span>Valeurs fréquentes</span>
-          </div>
-          <div className="verif-col-body">
-            {colEntries.map(([col, p]) => {
-              const meta      = getTypeMeta(p.dtype)
-              const fillColor = p.fill_rate === 100 ? '#10b981' : p.fill_rate >= 90 ? '#f59e0b' : '#ef4444'
-              return (
-                <div key={col} className={`verif-col-row ${p.n_missing > 0 ? 'verif-row-warn' : ''}`}>
-                  <span className="vcol-name" title={col}>
-                    {p.n_missing > 0 && <span className="modified-dot" title={`${p.n_missing} valeurs manquantes`} />}
-                    {col}
-                  </span>
-                  <span className="type-chip" style={{ '--chip-color': meta.color }}>
-                    {meta.icon} {meta.label}
-                  </span>
-                  <div className="vcol-fill">
-                    <div className="conf-bar-track">
-                      <div className="conf-bar-fill" style={{ width: `${p.fill_rate}%`, background: fillColor }} />
-                    </div>
-                    <span className="conf-pct" style={{ color: fillColor }}>{p.fill_rate}%</span>
-                  </div>
-                  <div className="vcol-top-vals">
-                    {p.top_values
-                      ? p.top_values.map(({ value, count }) => (
-                          <span key={value} className="vcol-top-chip" title={`${count} occurrences`}>
-                            {value === '' ? <em>vide</em> : value}
-                            <span className="vcol-top-count">{count}</span>
-                          </span>
-                        ))
-                      : p.min != null
-                        ? <span className="vcol-range">min {p.min} · max {p.max}</span>
-                        : null
-                    }
-                  </div>
-                </div>
-              )
-            })}
-          </div>
-        </div>
-      )}
-
-      {activeView === 'preview' && (
-        <div className="verif-preview-wrap">
-          <div className="preview-table-wrap">
-            <table className="preview-table">
-              <thead>
-                <tr>
-                  <th className="verif-row-num">#</th>
-                  {previewCols.map(c => <th key={c}>{c}</th>)}
-                </tr>
-              </thead>
-              <tbody>
-                {(preview || []).map((row, i) => (
-                  <tr key={i}>
-                    <td className="verif-row-num">{i + 1}</td>
-                    {previewCols.map((c, j) => (
-                      <td key={j}>
-                        {row[c] == null
-                          ? <span className="cell-null">null</span>
-                          : String(row[c]).length > 28
-                            ? String(row[c]).slice(0, 26) + '…'
-                            : String(row[c])}
-                      </td>
-                    ))}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      )}
-    </div>
-  )
-}
-
 // ── Pipeline Builder — sélection cible + config ───────────────────────────────
 function PipelineBuilderSection({ targetCandidates, selectedTarget, onSelectTarget,
                                    cardinality, onCardinalityChange,
@@ -915,8 +796,6 @@ export default function DataCleaning({ activeFile, setCleaningSession }) {
   const [excludedCols,       setExcludedCols]       = useState(new Set())
 
   // Vérification post-pipeline
-  const [verificationData,  setVerificationData]  = useState(null)
-  const [showVerification,  setShowVerification]  = useState(false)
 
   const [activeTab, setActiveTab] = useState('types')
   const [logs,      setLogs]      = useState([])
@@ -1116,21 +995,6 @@ export default function DataCleaning({ activeFile, setCleaningSession }) {
   }
 
   // ── ÉTAPE 5 : Chargement du panneau de vérification ─────────────────────
-  async function loadVerification() {
-    if (!sessionId) return
-    try {
-      const fd = new FormData()
-      fd.append('session_id', sessionId)
-      const res  = await fetch('/api/data-cleaning/pipeline/preview', { method: 'POST', body: fd })
-      const data = await res.json()
-      if (!res.ok || !data.success) throw new Error(data.error || `Erreur HTTP ${res.status}`)
-      setVerificationData(data)
-      setShowVerification(true)
-    } catch (e) {
-      addLog('pipeline', 'error', `Vérification échouée : ${e.message}`)
-    }
-  }
-
   // ── États visuels des cartes ──────────────────────────────────────────────
   const CARD_BADGE = {
     idle:     { label: 'En attente',              cls: 'badge-idle'    },
@@ -1336,14 +1200,7 @@ export default function DataCleaning({ activeFile, setCleaningSession }) {
               <div className="task-card-footer">
                 {pipPhase === 'done'
                   ? (
-                    <div className="imp-done-actions">
-                      <button className="btn-view" onClick={() => goToTab('pipelines')}>👁 Voir les résultats</button>
-                      <button
-                        className="btn-run"
-                        style={{ '--btn-c': '#6366f1' }}
-                        onClick={loadVerification}
-                      >🔍 Vérifier le dataset</button>
-                    </div>
+                    <button className="btn-view" onClick={() => goToTab('pipelines')}>👁 Voir les résultats</button>
                   )
                   : !pipPhase && (
                     <button
@@ -1561,16 +1418,6 @@ export default function DataCleaning({ activeFile, setCleaningSession }) {
       {/* ══════════════════════════════════════════════════════════════════════
           PANNEAU DE VÉRIFICATION
           ══════════════════════════════════════════════════════════════════ */}
-      {showVerification && (
-        <div className="modal-overlay" onClick={() => setShowVerification(false)}>
-          <div className="verification-modal" onClick={e => e.stopPropagation()}>
-            <DataVerificationPanel
-              data={verificationData}
-              onClose={() => setShowVerification(false)}
-            />
-          </div>
-        </div>
-      )}
 
     </div>
   )

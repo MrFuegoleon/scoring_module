@@ -536,11 +536,6 @@ class DataCleaningService:
 
         return df, col_report
 
-    # Alias conservé pour rétrocompatibilité interne
-    @staticmethod
-    def detect_and_treat_outliers(df: pd.DataFrame):
-        return DataCleaningService.apply_outlier_strategy(df, strategy='winsorise')
-
     # ─────────────────────────────────────────────────────────────────────────
     # 4. IMPUTATION — détection seule (read-only)
     # ─────────────────────────────────────────────────────────────────────────

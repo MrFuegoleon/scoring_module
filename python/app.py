@@ -1,6 +1,4 @@
-from flask import Flask, request, jsonify
-import pandas as pd
-import os
+from flask import Flask
 import logging
 
 logging.basicConfig(
@@ -25,41 +23,6 @@ PORT = 5000
 app.register_blueprint(data_quality_bp,   url_prefix="/api/data-quality")
 app.register_blueprint(data_cleaning_bp,  url_prefix="/api/data-cleaning")
 app.register_blueprint(data_modelling_bp, url_prefix="/api/data-modelling")
-# ── Routes existantes (inchangées) ──────────────────────────────────────────
-@app.route('/api/test', methods=['GET'])
-def test():
-    return jsonify({'message': 'Python OK', 'timestamp': pd.Timestamp.now().isoformat()})
-
-
-@app.route('/api/analyze', methods=['POST'])
-def analyze():
-    try:
-        data = request.get_json()
-        filepath = data.get('filepath')
-
-        if not filepath or not os.path.exists(filepath):
-            return jsonify({'error': 'Fichier non trouvé'}), 400
-
-        df = pd.read_csv(filepath)
-
-        result = {
-            'rows': len(df),
-            'columns': len(df.columns),
-            'column_names': df.columns.tolist(),
-            'dtypes': df.dtypes.astype(str).to_dict(),
-            'null_counts': df.isnull().sum().to_dict(),
-            'sample': df.head(3).to_dict('records')
-        }
-
-        try:
-            os.remove(filepath)
-        except (OSError, FileNotFoundError):
-            pass
-
-        return jsonify(result)
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
-
 
 if __name__ == '__main__':
     app.run(port=PORT, debug=False)

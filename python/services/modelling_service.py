@@ -130,11 +130,12 @@ class ModellingService:
 
         # Exclure les colonnes indicatrices d'imputation ({col}_missing) :
         # leur information est déjà capturée par le bin '__missing__' de la variable parente.
-        # Exclure aussi les colonnes à haute cardinalité (≥ 90%) : identifiants sans signal prédictif.
+        # Exclure aussi les colonnes catégorielles à haute cardinalité (≥ 90%) : identifiants sans signal prédictif.
+        # Les colonnes numériques continues ont naturellement beaucoup de valeurs uniques — elles sont binnalisées, pas exclues.
         def _should_skip(col: str) -> bool:
             if col.endswith('_missing'):
                 return True
-            if df[col].nunique() / total >= 0.9:
+            if not pd.api.types.is_numeric_dtype(df[col]) and df[col].nunique() / total >= 0.9:
                 return True
             return False
 

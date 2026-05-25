@@ -1,6 +1,7 @@
+import io
 import numpy as np
 import pandas as pd
-from flask import Blueprint, request, jsonify
+from flask import Blueprint, request, jsonify, send_file
 from services.session_store import SessionStore
 
 data_modelling_bp = Blueprint('data_modelling', __name__)
@@ -95,6 +96,8 @@ def train_model():
         n_comp_raw   = request.form.get('n_components')
         n_components = int(n_comp_raw) if n_comp_raw else None
         resampling   = request.form.get('resampling', 'none')
+        use_tuning   = request.form.get('use_tuning', 'false').lower() == 'true'
+        n_iter       = int(request.form.get('n_iter', 20))
 
         if not session_id or not model_type:
             return jsonify({"error": "Paramètres manquants (session_id, model_type)"}), 400
@@ -113,13 +116,16 @@ def train_model():
         if not target_col or target_col not in df.columns:
             return jsonify({"error": "Variable cible introuvable dans le datamart"}), 400
 
-        X, y, feature_names = TrainingService.prepare_preencoded_features(df, target_col)
+        X, y, feature_names, class_names = TrainingService.prepare_preencoded_features(df, target_col)
 
         pca_report = None
         if use_pca and pipeline == 'tree':
             X, pca_report = TrainingService.apply_pca(X, n_components)
 
-        results = TrainingService.train_and_evaluate(X, y, model_type, resampling=resampling)
+        results = TrainingService.train_and_evaluate(
+            X, y, model_type, resampling=resampling,
+            class_names=class_names, use_tuning=use_tuning, n_iter=n_iter
+        )
 
         response = {
             'success':       True,
@@ -138,3 +144,80 @@ def train_model():
         return jsonify({"error": str(e)}), 400
     except Exception as e:
         return jsonify({"error": f"Erreur serveur : {str(e)}"}), 500
+
+
+# ── /modelling/datamart/<type> ────────────────────────────────────────────────
+# Retourne le profil colonnes + aperçu du datamart (logit ou tree).
+@data_modelling_bp.route('/datamart/<pipeline_type>', methods=['GET'])
+def datamart_preview(pipeline_type):
+    try:
+        session_id = request.args.get('session_id')
+        n          = int(request.args.get('n', 100))
+
+        if not session_id:
+            return jsonify({'error': 'session_id manquant'}), 400
+        if pipeline_type not in ('logit', 'tree'):
+            return jsonify({'error': 'pipeline_type doit être logit ou tree'}), 400
+
+        sid = f'{session_id}_{pipeline_type}'
+        if not SessionStore.exists(sid):
+            return jsonify({'error': 'Datamart introuvable — construisez les pipelines d\'abord'}), 404
+
+        df    = SessionStore.get(sid)
+        total = len(df)
+
+        col_profiles = {}
+        for col in df.columns:
+            n_missing = int(df[col].isna().sum())
+            n_unique  = int(df[col].nunique(dropna=True))
+            profile   = {
+                'dtype':     str(df[col].dtype),
+                'n_missing': n_missing,
+                'n_unique':  n_unique,
+                'fill_rate': round((total - n_missing) / total * 100, 1) if total > 0 else 0,
+            }
+            if pd.api.types.is_numeric_dtype(df[col]):
+                desc = df[col].describe()
+                profile.update({
+                    'min': round(float(desc.get('min', 0) or 0), 4),
+                    'max': round(float(desc.get('max', 0) or 0), 4),
+                    'mean': round(float(desc.get('mean', 0) or 0), 4),
+                })
+            col_profiles[col] = profile
+
+        return jsonify({
+            'success':      True,
+            'pipeline':     pipeline_type,
+            'shape':        {'rows': total, 'cols': len(df.columns)},
+            'col_profiles': col_profiles,
+            'preview':      _safe_records(df, n),
+        }), 200
+
+    except Exception as e:
+        return jsonify({'error': f'Erreur serveur : {str(e)}'}), 500
+
+
+# ── /modelling/datamart/<type>/download ───────────────────────────────────────
+@data_modelling_bp.route('/datamart/<pipeline_type>/download', methods=['GET'])
+def datamart_download(pipeline_type):
+    session_id = request.args.get('session_id')
+    if not session_id:
+        return jsonify({'error': 'session_id manquant'}), 400
+    if pipeline_type not in ('logit', 'tree'):
+        return jsonify({'error': 'pipeline_type doit être logit ou tree'}), 400
+
+    sid = f'{session_id}_{pipeline_type}'
+    if not SessionStore.exists(sid):
+        return jsonify({'error': 'Datamart introuvable'}), 404
+
+    df  = SessionStore.get(sid)
+    buf = io.BytesIO()
+    df.to_csv(buf, index=False)
+    buf.seek(0)
+
+    return send_file(
+        buf,
+        mimetype='text/csv',
+        as_attachment=True,
+        download_name=f'datamart_{pipeline_type}_{session_id[:8]}.csv',
+    )

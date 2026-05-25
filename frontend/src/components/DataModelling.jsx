@@ -1,164 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 import './DataModelling.css'
 
-// ── Dataset Preview ───────────────────────────────────────────────────────────
-const KIND_META = {
-  numeric:     { label: 'num',  color: '#3b82f6' },
-  categorical: { label: 'cat',  color: '#f59e0b' },
-  datetime:    { label: 'date', color: '#10b981' },
-}
-
-function DatasetPreview({ colProfiles, preview, stats }) {
-  const [open, setOpen] = useState(true)
-  if (!preview || !colProfiles) return null
-
-  const columns = Object.keys(colProfiles)
-
-  return (
-    <div className="ds-preview-wrap">
-      <button className="ds-preview-toggle" onClick={() => setOpen(o => !o)}>
-        <span>🗂 Aperçu du dataset</span>
-        <div className="ds-preview-toggle-right">
-          <span className="ds-stat-chip">{stats.rows_count.toLocaleString()} lignes</span>
-          <span className="ds-stat-chip">{stats.cols_count} colonnes</span>
-          <span className="ds-chevron">{open ? '▲' : '▼'}</span>
-        </div>
-      </button>
-
-      {open && (
-        <>
-          {/* Profil des colonnes */}
-          <div className="ds-col-profiles">
-            {columns.map(col => {
-              const p    = colProfiles[col]
-              const meta = KIND_META[p.kind] || { label: p.kind, color: '#9ca3af' }
-              return (
-                <div key={col} className="ds-col-chip">
-                  <span className="ds-col-name">{col}</span>
-                  <span className="ds-col-type" style={{ color: meta.color, borderColor: meta.color + '44' }}>
-                    {meta.label}
-                  </span>
-                  {p.n_missing > 0 && (
-                    <span className="ds-col-missing">{(100 - p.fill_rate).toFixed(0)}% NaN</span>
-                  )}
-                </div>
-              )
-            })}
-          </div>
-
-          {/* Table des données */}
-          <div className="ds-table-scroll">
-            <table className="ds-table">
-              <thead>
-                <tr>
-                  <th className="ds-th-idx">#</th>
-                  {columns.map(col => {
-                    const p    = colProfiles[col]
-                    const meta = KIND_META[p.kind] || { label: p.kind, color: '#9ca3af' }
-                    return (
-                      <th key={col}>
-                        <div className="ds-th-inner">
-                          <span>{col}</span>
-                          <span className="ds-th-type" style={{ color: meta.color }}>{meta.label}</span>
-                        </div>
-                      </th>
-                    )
-                  })}
-                </tr>
-              </thead>
-              <tbody>
-                {preview.map((row, i) => (
-                  <tr key={i}>
-                    <td className="ds-td-idx">{i + 1}</td>
-                    {columns.map(col => {
-                      const val = row[col]
-                      const isNull = val === null || val === undefined
-                      return (
-                        <td key={col} className={isNull ? 'ds-td-null' : ''}>
-                          {isNull ? <span className="ds-null-tag">NaN</span> : String(val)}
-                        </td>
-                      )
-                    })}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </>
-      )}
-    </div>
-  )
-}
-
-// ── WOE Dataset Preview ───────────────────────────────────────────────────────
-function WoeDatasetPreview({ columns, preview, targetCol }) {
-  const [open, setOpen] = useState(true)
-
-  const isTarget  = col => col === targetCol
-  const isWoe     = col => col.endsWith('_woe')
-
-  return (
-    <div className="ds-preview-wrap" style={{ marginTop: '1.5rem' }}>
-      <button className="ds-preview-toggle" onClick={() => setOpen(o => !o)}>
-        <span>📐 Dataset transformé (WOE)</span>
-        <div className="ds-preview-toggle-right">
-          <span className="ds-stat-chip">{columns.length} colonnes</span>
-          <span className="ds-stat-chip woe-chip">valeurs WOE</span>
-          <span className="ds-chevron">{open ? '▲' : '▼'}</span>
-        </div>
-      </button>
-
-      {open && (
-        <div className="ds-table-scroll">
-          <table className="ds-table">
-            <thead>
-              <tr>
-                <th className="ds-th-idx">#</th>
-                {columns.map(col => (
-                  <th key={col} className={isTarget(col) ? 'woe-th-target' : isWoe(col) ? 'woe-th-woe' : ''}>
-                    <div className="ds-th-inner">
-                      <span>{col}</span>
-                      {isTarget(col) && <span className="ds-th-type" style={{ color: '#6366f1' }}>cible</span>}
-                      {isWoe(col)    && <span className="ds-th-type" style={{ color: '#10b981' }}>WOE</span>}
-                    </div>
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {preview.map((row, i) => (
-                <tr key={i}>
-                  <td className="ds-td-idx">{i + 1}</td>
-                  {columns.map(col => {
-                    const val    = row[col]
-                    const isNull = val === null || val === undefined
-                    const woe    = isWoe(col) && !isNull
-                    return (
-                      <td
-                        key={col}
-                        className={isNull ? 'ds-td-null' : isTarget(col) ? 'woe-td-target' : ''}
-                      >
-                        {isNull
-                          ? <span className="ds-null-tag">NaN</span>
-                          : woe
-                            ? <span className={`woe-cell-val ${val >= 0 ? 'woe-pos' : 'woe-neg'}`}>
-                                {val >= 0 ? '+' : ''}{Number(val).toFixed(4)}
-                              </span>
-                            : String(val)
-                        }
-                      </td>
-                    )
-                  })}
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
-    </div>
-  )
-}
-
 // ── Helpers ───────────────────────────────────────────────────────────────────
 function IVBadge({ label, color, iv }) {
   return (
@@ -353,19 +195,20 @@ function ProbDistribution({ dist }) {
 }
 
 // ── Confusion Matrix ──────────────────────────────────────────────────────────
-function ConfusionMatrix({ cm }) {
+function ConfusionMatrix({ cm, classNames }) {
   if (!cm) return null
   const [[tn, fp], [fn, tp]] = cm
   const total = tn + fp + fn + tp
+  const [neg, pos] = classNames || ['0', '1']
   return (
     <div className="conf-matrix">
       <div className="conf-matrix-label-row">
         <span />
-        <span className="conf-pred-label">Prédit 0</span>
-        <span className="conf-pred-label">Prédit 1</span>
+        <span className="conf-pred-label">Prédit {neg}</span>
+        <span className="conf-pred-label">Prédit {pos}</span>
       </div>
-      {[['Réel 0', tn, fp, '#10b981', '#ef4444'],
-        ['Réel 1', fn, tp, '#ef4444', '#10b981']].map(([lbl, a, b, ca, cb]) => (
+      {[[`Réel ${neg}`, tn, fp, '#10b981', '#ef4444'],
+        [`Réel ${pos}`, fn, tp, '#ef4444', '#10b981']].map(([lbl, a, b, ca, cb]) => (
         <div key={lbl} className="conf-matrix-row">
           <span className="conf-real-label">{lbl}</span>
           <span className="conf-cell" style={{ background: ca + '22', color: ca }}>
@@ -409,6 +252,50 @@ const MODEL_META = {
   xgboost:       { name: 'XGBoost',               color: '#f59e0b', icon: '🌲' },
   lightgbm:      { name: 'LightGBM',              color: '#10b981', icon: '⚡' },
   random_forest: { name: 'Random Forest',         color: '#3b82f6', icon: '🌳' },
+}
+
+// ── Dataset Diagnostic ───────────────────────────────────────────────────────
+function DatasetDiagnostic({ diagnostic }) {
+  if (!diagnostic) return null
+  const { minority_ratio, is_imbalanced, is_severe, warnings = [], cv_folds_used, cv_folds_requested } = diagnostic
+  const pct          = (minority_ratio * 100).toFixed(1)
+  const balanceColor = is_severe ? '#ef4444' : is_imbalanced ? '#f59e0b' : '#10b981'
+  const balanceLabel = is_severe ? 'Très déséquilibré' : is_imbalanced ? 'Déséquilibré' : 'Équilibré'
+
+  return (
+    <div className="dataset-diagnostic">
+      <div className="diagnostic-header">
+        <span className="diagnostic-icon">🧬</span>
+        <span className="diagnostic-title">Diagnostic du dataset</span>
+      </div>
+      <div className="diagnostic-row">
+        <div className="diagnostic-chip" style={{ borderColor: balanceColor + '66' }}>
+          <span className="diagnostic-chip-label">Classe minoritaire</span>
+          <span className="diagnostic-chip-val" style={{ color: balanceColor }}>
+            {pct}% · {balanceLabel}
+          </span>
+        </div>
+        {cv_folds_used !== undefined && (
+          <div className="diagnostic-chip">
+            <span className="diagnostic-chip-label">CV folds</span>
+            <span className="diagnostic-chip-val">
+              {cv_folds_used}
+              {cv_folds_requested && cv_folds_used !== cv_folds_requested && (
+                <span className="diagnostic-chip-hint"> (demandé : {cv_folds_requested})</span>
+              )}
+            </span>
+          </div>
+        )}
+      </div>
+      {warnings.length > 0 && (
+        <div className="diagnostic-warnings">
+          {warnings.map((w, i) => (
+            <div key={i} className="diagnostic-warning">⚠ {w}</div>
+          ))}
+        </div>
+      )}
+    </div>
+  )
 }
 
 function ModelResultCard({ modelType, result, error, running }) {
@@ -485,10 +372,25 @@ function ModelResultCard({ modelType, result, error, running }) {
               </div>
               <div>
                 <div className="model-detail-label">Matrice de confusion</div>
-                <ConfusionMatrix cm={result.results.confusion_matrix} />
+                <ConfusionMatrix cm={result.results.confusion_matrix} classNames={result.results.class_names} />
+                {result.results.optimal_threshold !== undefined && result.results.optimal_threshold !== 0.5 && (
+                  <div className="model-threshold-note">
+                    🎯 Seuil optimal : <strong>{result.results.optimal_threshold.toFixed(3)}</strong>
+                    <span className="model-threshold-hint">
+                      (≠ 0.5 — ajusté automatiquement pour ce dataset)
+                    </span>
+                  </div>
+                )}
                 <div className="model-cv-note">
                   CV {result.results.cv_folds} folds · train {result.results.n_train} obs · test {result.results.n_test} obs · {result.results.n_features} features
                 </div>
+                {result.results.tuning && (
+                  <div className="model-tuning-note">
+                    🔍 RandomSearch · {result.results.tuning.strategy} · {result.results.tuning.n_candidates}/{result.results.tuning.grid_size} combos
+                    · scoring <strong>{result.results.tuning.scoring || 'roc_auc'}</strong>
+                    · {result.results.tuning.scoring === 'average_precision' ? 'AP' : 'AUC'} CV {result.results.tuning.best_auc_cv}
+                  </div>
+                )}
                 {result.results.resampling && result.results.resampling.method !== 'none' && (
                   <div className="model-resample-note">
                     {result.results.resampling.method === 'undersample' && '⬇ Sous-échantillonnage'}
@@ -540,13 +442,21 @@ export default function DataModelling({ cleaningSession }) {
   // ── Training state ────────────────────────────────────────────────────────
   const [trainConfig, setTrainConfig] = useState({
     rawModels:   { xgboost: true, lightgbm: true, random_forest: true },
-    usePca:      false,
+    usePca:     false,
     nComponents: null,
     resampling:  'none',
+    useTuning:   false,
+    nIter:       20,
   })
   const [trainResults, setTrainResults] = useState({})
   const [trainRunning, setTrainRunning] = useState({})
   const [trainErrors,  setTrainErrors]  = useState({})
+
+  // ── Datamart inspector state ──────────────────────────────────────────────
+  const [dmInspOpen,    setDmInspOpen]    = useState(false)
+  const [dmInspTab,     setDmInspTab]     = useState('logit')
+  const [dmInspData,    setDmInspData]    = useState({})   // { logit: {...}, tree: {...} }
+  const [dmInspLoading, setDmInspLoading] = useState(false)
 
   const prevSessionRef = useRef(null)
 
@@ -558,6 +468,8 @@ export default function DataModelling({ cleaningSession }) {
     setTrainResults({})
     setTrainRunning({})
     setTrainErrors({})
+    setDmInspData({})
+    setDmInspOpen(false)
   }
 
   // ── Auto-reset quand la session de cleaning change ────────────────────────
@@ -601,6 +513,8 @@ export default function DataModelling({ cleaningSession }) {
     fd.append('model_type', modelType)
     fd.append('use_pca',    String(trainConfig.usePca))
     fd.append('resampling', trainConfig.resampling)
+    fd.append('use_tuning', String(trainConfig.useTuning))
+    fd.append('n_iter',     String(trainConfig.nIter))
     if (trainConfig.nComponents) fd.append('n_components', String(trainConfig.nComponents))
 
     try {
@@ -613,6 +527,32 @@ export default function DataModelling({ cleaningSession }) {
     } finally {
       setTrainRunning(prev => ({ ...prev, [modelType]: false }))
     }
+  }
+
+  async function loadDatamart(type) {
+    if (dmInspData[type]) return   // déjà chargé
+    setDmInspLoading(true)
+    try {
+      const res  = await fetch(`/api/data-modelling/datamart/${type}?session_id=${cleaningSession}&n=100`)
+      const data = await res.json()
+      if (!res.ok || !data.success) throw new Error(data.error || `Erreur HTTP ${res.status}`)
+      setDmInspData(prev => ({ ...prev, [type]: data }))
+    } catch (e) {
+      setDmInspData(prev => ({ ...prev, [type]: { error: e.message } }))
+    } finally {
+      setDmInspLoading(false)
+    }
+  }
+
+  function switchDmTab(type) {
+    setDmInspTab(type)
+    if (dmInspOpen) loadDatamart(type)
+  }
+
+  function toggleDmInspector() {
+    const next = !dmInspOpen
+    setDmInspOpen(next)
+    if (next) loadDatamart(dmInspTab)
   }
 
   async function launchTraining() {
@@ -708,6 +648,118 @@ export default function DataModelling({ cleaningSession }) {
             <p>Variable cible : <strong>{datamartInfo.target_col}</strong></p>
           </div>
 
+          {/* ── Inspecteur datamarts ── */}
+          <div className="dm-inspector">
+            <button className="dm-inspector-toggle" onClick={toggleDmInspector}>
+              <span>🔍 Inspecter les datamarts</span>
+              <div className="dm-inspector-toggle-right">
+                <span className="ds-stat-chip">Logit · {datamartInfo.logit.n_cols - 1} features</span>
+                <span className="ds-stat-chip">Tree · {datamartInfo.tree.n_cols - 1} features</span>
+                <span className="ds-chevron">{dmInspOpen ? '▲' : '▼'}</span>
+              </div>
+            </button>
+
+            {dmInspOpen && (
+              <div className="dm-inspector-body">
+                {/* Onglets */}
+                <div className="dm-insp-tabs">
+                  {[['logit', '📈 Logit (WOE)'], ['tree', '🌲 Tree (OHE + TE)']].map(([t, lbl]) => (
+                    <button
+                      key={t}
+                      className={`dm-insp-tab ${dmInspTab === t ? 'active' : ''}`}
+                      onClick={() => switchDmTab(t)}
+                    >
+                      {lbl}
+                    </button>
+                  ))}
+                  <a
+                    className="dm-insp-download"
+                    href={`/api/data-modelling/datamart/${dmInspTab}/download?session_id=${cleaningSession}`}
+                    download
+                  >
+                    ⬇ Télécharger CSV
+                  </a>
+                </div>
+
+                {/* Contenu */}
+                {dmInspLoading && !dmInspData[dmInspTab] ? (
+                  <div className="dm-insp-loading"><div className="dm-spinner" /> Chargement…</div>
+                ) : dmInspData[dmInspTab]?.error ? (
+                  <div className="dm-error">⚠ {dmInspData[dmInspTab].error}</div>
+                ) : dmInspData[dmInspTab] ? (() => {
+                  const d = dmInspData[dmInspTab]
+                  const cols = Object.keys(d.col_profiles)
+                  const isTarget = col => col === datamartInfo.target_col
+                  const isWoe    = col => col.endsWith('_woe')
+                  return (
+                    <>
+                      <div className="dm-insp-stats">
+                        <span className="ds-stat-chip">{d.shape.rows.toLocaleString()} lignes</span>
+                        <span className="ds-stat-chip">{d.shape.cols} colonnes</span>
+                      </div>
+                      {/* Profil colonnes */}
+                      <div className="ds-col-profiles">
+                        {cols.map(col => {
+                          const p = d.col_profiles[col]
+                          return (
+                            <div key={col} className="ds-col-chip">
+                              <span className="ds-col-name">{col}</span>
+                              <span className="ds-col-type" style={{ color: '#3b82f6', borderColor: '#3b82f644' }}>
+                                {p.dtype}
+                              </span>
+                              {isWoe(col) && <span className="ds-col-type" style={{ color: '#10b981', borderColor: '#10b98144' }}>WOE</span>}
+                              {isTarget(col) && <span className="ds-col-type" style={{ color: '#6366f1', borderColor: '#6366f144' }}>cible</span>}
+                              {p.n_missing > 0 && <span className="ds-col-missing">{p.n_missing} NaN</span>}
+                            </div>
+                          )
+                        })}
+                      </div>
+                      {/* Table */}
+                      <div className="ds-table-scroll">
+                        <table className="ds-table">
+                          <thead>
+                            <tr>
+                              <th className="ds-th-idx">#</th>
+                              {cols.map(col => (
+                                <th key={col} className={isTarget(col) ? 'woe-th-target' : isWoe(col) ? 'woe-th-woe' : ''}>
+                                  {col}
+                                </th>
+                              ))}
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {d.preview.map((row, i) => (
+                              <tr key={i}>
+                                <td className="ds-td-idx">{i + 1}</td>
+                                {cols.map(col => {
+                                  const val = row[col]
+                                  const isNull = val === null || val === undefined
+                                  const woe = isWoe(col) && !isNull
+                                  return (
+                                    <td key={col} className={isNull ? 'ds-td-null' : isTarget(col) ? 'woe-td-target' : ''}>
+                                      {isNull
+                                        ? <span className="ds-null-tag">NaN</span>
+                                        : woe
+                                          ? <span className={`woe-cell-val ${val >= 0 ? 'woe-pos' : 'woe-neg'}`}>
+                                              {val >= 0 ? '+' : ''}{Number(val).toFixed(4)}
+                                            </span>
+                                          : String(val)
+                                      }
+                                    </td>
+                                  )
+                                })}
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </>
+                  )
+                })() : null}
+              </div>
+            )}
+          </div>
+
           {/* Info datamarts */}
           <div className="train-config-grid" style={{ marginBottom: '1rem' }}>
             <div className="train-config-card train-card-woe">
@@ -756,6 +808,31 @@ export default function DataModelling({ cleaningSession }) {
                     </label>
                   ))}
                 </div>
+              </div>
+              <div className="train-config-field">
+                <label className="train-check-label">
+                  <input
+                    type="checkbox"
+                    checked={trainConfig.useTuning}
+                    onChange={e => setTrainConfig(c => ({ ...c, useTuning: e.target.checked }))}
+                  />
+                  Optimiser les hyperparamètres (RandomSearchCV)
+                </label>
+                {trainConfig.useTuning && (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginTop: '0.4rem' }}>
+                    <span style={{ fontSize: '0.8rem', color: '#6b7280' }}>Itérations :</span>
+                    <input
+                      className="train-ncomp-input"
+                      type="number"
+                      min={5} max={100}
+                      value={trainConfig.nIter}
+                      onChange={e => setTrainConfig(c => ({ ...c, nIter: parseInt(e.target.value) || 20 }))}
+                    />
+                    <span style={{ fontSize: '0.75rem', color: '#9ca3af' }}>
+                      (= grille complète si &lt; taille grid)
+                    </span>
+                  </div>
+                )}
               </div>
               <div className="train-config-field">
                 <label className="train-check-label">
@@ -823,6 +900,11 @@ export default function DataModelling({ cleaningSession }) {
           )}
 
           {/* Résultats */}
+          {(() => {
+            const firstResult = Object.values(trainResults)[0]
+            const diagnostic  = firstResult?.results?.dataset_diagnostic
+            return diagnostic ? <DatasetDiagnostic diagnostic={diagnostic} /> : null
+          })()}
           <div className="train-results-grid">
             {['logit', 'xgboost', 'lightgbm', 'random_forest'].map(m => {
               const hasResult = !!trainResults[m]

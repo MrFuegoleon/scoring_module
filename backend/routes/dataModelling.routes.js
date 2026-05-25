@@ -10,8 +10,12 @@ const upload = multer();
 router.get("/*", async (req, res) => {
   const flaskUrl = `http://localhost:5000/api/data-modelling${req.path}`;
   try {
-    const response = await axios.get(flaskUrl);
-    res.json(response.data);
+    const response = await axios.get(flaskUrl, {
+      params: req.query,
+      responseType: "stream",
+    });
+    res.set(response.headers);
+    response.data.pipe(res);
   } catch (e) {
     const status = e.response?.status || 500;
     const message = e.response?.data?.error || e.message || "Erreur interne";
