@@ -5,6 +5,8 @@ import cors from "cors";
 import dataQualityRouter   from "./routes/dataQuality.routes.js";
 import dataCleaningRouter  from "./routes/dataCleaning.routes.js";
 import dataModellingRouter from "./routes/dataModelling.routes.js";
+import multilabelRouter    from "./routes/multilabel.routes.js";
+import deploymentRouter    from "./routes/deployment.routes.js";
 
 const app = express();
 const PORT = 3001;
@@ -25,6 +27,8 @@ app.use(express.json());
 app.use("/api/data-quality",   dataQualityRouter);
 app.use("/api/data-cleaning",  dataCleaningRouter);
 app.use("/api/data-modelling", dataModellingRouter);
+app.use("/api/multilabel",     multilabelRouter);
+app.use("/api/deployment",     deploymentRouter);
 
 
 app.listen(PORT, () => {

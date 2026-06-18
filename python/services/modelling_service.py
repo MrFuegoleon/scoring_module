@@ -53,17 +53,92 @@ class ModellingService:
     # 2. DISCRÉTISATION
     # ─────────────────────────────────────────────────────────────────────────
     @staticmethod
-    def _bin_continuous(series: pd.Series, n_bins: int = 10) -> pd.Series:
+    def _fit_edges(series: pd.Series, n_bins: int = 10, target: pd.Series = None,
+                   monotonic: bool = True):
+        """
+        Mode FIT (train uniquement) : calcule les bornes de discrétisation par quantiles.
+        Retourne None si la variable doit être traitée en discret (faible cardinalité
+        ou échec qcut). Les bornes extérieures sont mises à ±inf pour couvrir les valeurs
+        hors-range rencontrées en test / prédiction.
+
+        Si `monotonic` et `target` fourni : fusionne les bins adjacents qui cassent la
+        tendance monotone du taux d'événement (best practice scoring crédit).
+        """
         non_null = series.dropna()
         if non_null.nunique() <= n_bins:
-            return series.apply(lambda x: str(x) if pd.notna(x) else '__missing__')
+            return None
         try:
-            binned = pd.qcut(series, q=n_bins, duplicates='drop', precision=2)
-            result = binned.astype(str)
-            result[series.isna()] = '__missing__'
-            return result
+            _, edges = pd.qcut(non_null, q=n_bins, duplicates='drop', retbins=True)
+            edges = [float(e) for e in edges]
+            if len(edges) < 3:
+                return None
         except Exception:
-            return series.apply(lambda x: str(x) if pd.notna(x) else '__missing__')
+            return None
+
+        if monotonic and target is not None:
+            edges = ModellingService._merge_monotonic(series, target, edges)
+
+        edges[0]  = float('-inf')
+        edges[-1] = float('inf')
+        return edges
+
+    @staticmethod
+    def _merge_monotonic(series: pd.Series, target: pd.Series, edges: list) -> list:
+        """
+        Fusionne itérativement les bins adjacents qui violent la monotonie du taux
+        d'événement, jusqu'à obtenir une tendance monotone (ou 2 bins restants).
+        La direction (croissante/décroissante) est déduite de la corrélation
+        rang(bin) ↔ taux d'événement.
+        """
+        edges  = list(edges)
+        y_vals = np.asarray(target, dtype=float)
+
+        def _event_rates(eds):
+            codes = pd.cut(series, bins=eds, include_lowest=True, labels=False)
+            c = np.asarray(codes, dtype=float)
+            mask = ~np.isnan(c)
+            d = pd.DataFrame({'c': c[mask], 'y': y_vals[mask]})
+            return d.groupby('c')['y'].mean()
+
+        er = _event_rates(edges)
+        if len(er) < 3:
+            return edges
+
+        # Direction de la tendance
+        try:
+            corr = np.corrcoef(er.index.astype(float), er.values)[0, 1]
+        except Exception:
+            corr = 1.0
+        sign = 1.0 if (np.isnan(corr) or corr >= 0) else -1.0
+
+        # Fusion itérative : retire la borne intérieure entre deux bins en conflit
+        while True:
+            rates = _event_rates(edges).values
+            if len(rates) <= 2:
+                break
+            violated = None
+            for i in range(len(rates) - 1):
+                diff = rates[i + 1] - rates[i]
+                if (sign > 0 and diff < 0) or (sign < 0 and diff > 0):
+                    violated = i
+                    break
+            if violated is None:
+                break
+            del edges[violated + 1]
+
+        return edges
+
+    @staticmethod
+    def _apply_edges(series: pd.Series, edges: list) -> pd.Series:
+        """
+        Mode TRANSFORM : discrétise via des bornes FIXES (issues du train).
+        Garantit des labels identiques entre train et test → WOE portable.
+        NaN → '__missing__' ; hors-range couvert par les bornes ±inf.
+        """
+        binned = pd.cut(series, bins=edges, include_lowest=True)
+        out = binned.astype(str)
+        out[series.isna()] = '__missing__'
+        return out
 
     @staticmethod
     def _bin_categorical(series: pd.Series) -> pd.Series:
@@ -162,8 +237,13 @@ class ModellingService:
             is_numeric = pd.api.types.is_numeric_dtype(df_work[col])
             var_type   = 'continue' if is_numeric else 'catégorielle'
 
-            if is_numeric:
-                df_work['__bin__'] = ModellingService._bin_continuous(df_work[col], n_bins)
+            # Bornes calculées sur le train et STOCKÉES → réappliquées à l'identique au test.
+            # Binning monotone : fusion des bins cassant la tendance de risque.
+            edges = ModellingService._fit_edges(
+                df_work[col], n_bins, target=df_work['__target__'], monotonic=True
+            ) if is_numeric else None
+            if edges is not None:
+                df_work['__bin__'] = ModellingService._apply_edges(df_work[col], edges)
             else:
                 df_work['__bin__'] = ModellingService._bin_categorical(df_work[col])
 
@@ -176,6 +256,7 @@ class ModellingService:
                 "iv_color":        iv_color,
                 "var_type":        var_type,
                 "dtype":           str(df[col].dtype),
+                "edges":           edges,   # None si discret/catégoriel
                 "n_bins":          len(bins_stats),
                 "has_missing_bin": any(b["is_missing"] for b in bins_stats),
                 "bins":            bins_stats,
@@ -206,8 +287,10 @@ class ModellingService:
             bin_to_woe = {b["bin"]: b["woe"] for b in info["bins"]}
             missing_woe = bin_to_woe.get("__missing__", 0.0)
 
-            if info["var_type"] == "continue":
-                binned = ModellingService._bin_continuous(df[col], n_bins)
+            # Bornes stockées au fit → mêmes labels qu'au train (WOE portable, pas de leakage)
+            edges = info.get("edges")
+            if edges is not None:
+                binned = ModellingService._apply_edges(df[col], edges)
             else:
                 binned = ModellingService._bin_categorical(df[col])
 

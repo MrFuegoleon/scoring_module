@@ -2,6 +2,7 @@ import io
 import numpy as np
 import pandas as pd
 from flask import Blueprint, request, jsonify, send_file
+from sklearn.model_selection import train_test_split
 from services.session_store import SessionStore
 
 data_modelling_bp = Blueprint('data_modelling', __name__)
@@ -92,10 +93,6 @@ def train_model():
 
         session_id   = request.form.get('session_id')
         model_type   = request.form.get('model_type')
-        use_pca      = request.form.get('use_pca', 'false').lower() == 'true'
-        n_comp_raw   = request.form.get('n_components')
-        n_components = int(n_comp_raw) if n_comp_raw else None
-        resampling   = request.form.get('resampling', 'none')
         use_tuning   = request.form.get('use_tuning', 'false').lower() == 'true'
         n_iter       = int(request.form.get('n_iter', 20))
 
@@ -109,23 +106,96 @@ def train_model():
         if not SessionStore.exists(sid):
             return jsonify({"error": f"Datamart '{pipeline}' non trouvé — construisez les pipelines d'abord"}), 404
 
-        df         = SessionStore.get(sid)
         meta       = SessionStore.get_meta(session_id)
         target_col = meta.get('target_col')
-
-        if not target_col or target_col not in df.columns:
+        if not target_col:
             return jsonify({"error": "Variable cible introuvable dans le datamart"}), 400
 
-        X, y, feature_names, class_names = TrainingService.prepare_preencoded_features(df, target_col)
+        # ── Chemin sans leakage : split sur données brutes avant encodage ───────
+        # Le split encodé est mis en cache : recliquer "Relancer" ne recalcule plus
+        # WOE/OHE+TE (invalidé au rebuild des pipelines via cache_clear_prefix).
+        cache_key       = f'{session_id}_{pipeline}_split'
+        cached          = SessionStore.cache_get(cache_key)
+        feature_names   = class_names = None
+        used_split_path = False
+        X_tr = y_tr = X_te = y_te = None
+        encoders = raw_schema = None
 
-        pca_report = None
-        if use_pca and pipeline == 'tree':
-            X, pca_report = TrainingService.apply_pca(X, n_components)
+        if cached is not None:
+            X_tr, y_tr, X_te, y_te, feature_names, class_names, encoders, raw_schema = cached
+            used_split_path = True
+        else:
+            df_raw = SessionStore.get(session_id)
+            if df_raw is not None and target_col in df_raw.columns:
+                from services.pipeline_service import PipelineService
 
-        results = TrainingService.train_and_evaluate(
-            X, y, model_type, resampling=resampling,
-            class_names=class_names, use_tuning=use_tuning, n_iter=n_iter
-        )
+                raw_target = df_raw[target_col].dropna()
+                raw_vals   = sorted(raw_target.unique(), key=str)
+                if len(raw_vals) == 2:   # cible binaire requise pour le chemin sans leakage
+                    raw_map = {raw_vals[0]: 0, raw_vals[1]: 1}
+                    y_strat = df_raw[target_col].map(raw_map).dropna().astype(int)
+                    df_raw  = df_raw.loc[y_strat.index]
+
+                    df_train_raw, df_test_raw = train_test_split(
+                        df_raw, test_size=0.2, stratify=y_strat, random_state=42
+                    )
+
+                    try:
+                        from services.deployment_service import build_raw_schema
+                        if pipeline == 'logit':
+                            df_tr_enc, df_te_enc, encoders = PipelineService.build_logit_pipeline_split(
+                                df_train_raw, df_test_raw, target_col
+                            )
+                        else:
+                            df_tr_enc, df_te_enc, encoders = PipelineService.build_tree_pipeline_split(
+                                df_train_raw, df_test_raw, target_col
+                            )
+
+                        raw_schema = build_raw_schema(df_raw, target_col)
+                        X_tr, y_tr, feature_names, class_names = TrainingService.prepare_preencoded_features(df_tr_enc, target_col)
+                        X_te, y_te, _, _                       = TrainingService.prepare_preencoded_features(df_te_enc, target_col)
+                        SessionStore.cache_set(cache_key, (X_tr, y_tr, X_te, y_te, feature_names, class_names, encoders, raw_schema))
+                        used_split_path = True
+                    except Exception:
+                        used_split_path = False
+
+        if used_split_path:
+            results, artifact = TrainingService.train_and_evaluate(
+                X_tr, y_tr, model_type,
+                class_names=class_names, use_tuning=use_tuning, n_iter=n_iter,
+                X_test_pre=X_te, y_test_pre=y_te, return_artifact=True,
+            )
+            # Met en cache l'artifact de déploiement (réutilisé au clic « Déployer »)
+            try:
+                from services import deployment_service as DS
+                artifact.update({
+                    'model_type': model_type,
+                    'pipeline':   pipeline,
+                    'target_col': target_col,
+                    'encoders':   encoders,
+                    'raw_schema': raw_schema,
+                    'meta': {
+                        'auc_test':    results.get('auc_test'),
+                        'gini_test':   results.get('gini_test'),
+                        'ks_test':     results.get('ks_test'),
+                        'n_features':  results.get('n_features'),
+                        'calibration': results.get('calibration'),
+                        'versions':    DS.current_versions(),
+                    },
+                })
+                SessionStore.cache_set(f'{session_id}_{model_type}_artifact', artifact)
+            except Exception:
+                pass
+        else:
+            # Fallback : datamart pré-encodé (split interne) — datamart chargé ici uniquement
+            df = SessionStore.get(sid)
+            if target_col not in df.columns:
+                return jsonify({"error": "Variable cible introuvable dans le datamart"}), 400
+            X, y, feature_names, class_names = TrainingService.prepare_preencoded_features(df, target_col)
+            results = TrainingService.train_and_evaluate(
+                X, y, model_type,
+                class_names=class_names, use_tuning=use_tuning, n_iter=n_iter,
+            )
 
         response = {
             'success':       True,
@@ -135,9 +205,6 @@ def train_model():
             'results':       results,
             'feature_names': feature_names,
         }
-        if pca_report:
-            response['pca_report'] = pca_report
-
         return jsonify(response), 200
 
     except ValueError as e:

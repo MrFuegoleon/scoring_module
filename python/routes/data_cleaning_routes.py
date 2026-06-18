@@ -286,6 +286,8 @@ def pipeline_build():
         cols_to_drop = [c for c in excluded_cols if c in df.columns and c != target_col]
         if cols_to_drop:
             df = df.drop(columns=cols_to_drop)
+            # Mise à jour du df brut en session pour que le chemin split utilise le même périmètre
+            SessionStore.set(session_id, df)
 
         df_logit, logit_summary = PipelineService.build_logit_pipeline(df, target_col, n_bins)
         df_tree,  tree_summary  = PipelineService.build_tree_pipeline(df, target_col, cardinality, smoothing)
@@ -293,6 +295,8 @@ def pipeline_build():
         SessionStore.set(f'{session_id}_logit', df_logit)
         SessionStore.set(f'{session_id}_tree',  df_tree)
         SessionStore.set_meta(session_id, {'target_col': target_col})
+        # Invalide les splits encodés en cache (le périmètre des features a pu changer)
+        SessionStore.cache_clear_prefix(session_id)
 
         return jsonify({
             'success':       True,

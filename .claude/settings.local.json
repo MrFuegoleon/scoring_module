@@ -4,7 +4,14 @@
       "Bash(pip install *)",
       "Bash(Get-ChildItem -Path \"c:\\\\Users\\\\lenovo\\\\Desktop\\\\scoring_module\" -Recurse -Directory)",
       "Bash(Select-Object FullName)",
-      "Bash(Head -30)"
+      "Bash(Head -30)",
+      "Bash(Get-ChildItem -Path \"c:\\\\Users\\\\lenovo\\\\Desktop\\\\scoring_module\" -Force)",
+      "Bash(Select-Object Name, PSIsContainer)",
+      "PowerShell(Get-ChildItem -Path \"c:\\\\Users\\\\lenovo\\\\Desktop\\\\scoring_module\\\\frontend\\\\src\" -Recurse -ErrorAction SilentlyContinue | Where-Object { $_.Extension -in '.js', '.jsx' } | Select-Object Name)",
+      "Skill(code-review)",
+      "Skill(code-review:*)",
+      "Bash(git diff *)",
+      "Bash(python -m py_compile services/training_service.py services/session_store.py routes/data_modelling_routes.py routes/data_cleaning_routes.py services/multilabel_service.py)"
     ]
   }
 }

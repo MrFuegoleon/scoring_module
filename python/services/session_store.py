@@ -20,6 +20,7 @@ class SessionStore:
 
     _store: dict[str, pd.DataFrame] = {}
     _meta_store: dict[str, dict] = {}
+    _cache: dict = {}                      # cache d'objets arbitraires (splits encodés, etc.)
     _lock = Lock()
 
     @classmethod
@@ -67,3 +68,21 @@ class SessionStore:
     def get_meta(cls, sid: str) -> dict:
         with cls._lock:
             return cls._meta_store.get(sid, {}).copy()
+
+    # ── Cache générique (objets non-DataFrame : splits encodés, etc.) ──────────
+    @classmethod
+    def cache_get(cls, key: str):
+        with cls._lock:
+            return cls._cache.get(key)
+
+    @classmethod
+    def cache_set(cls, key: str, value) -> None:
+        with cls._lock:
+            cls._cache[key] = value
+
+    @classmethod
+    def cache_clear_prefix(cls, prefix: str) -> None:
+        """Invalide toutes les entrées de cache d'une session (ex: après rebuild des pipelines)."""
+        with cls._lock:
+            for k in [k for k in cls._cache if k.startswith(prefix)]:
+                cls._cache.pop(k, None)

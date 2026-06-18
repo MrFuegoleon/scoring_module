@@ -1,93 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 import './DataModelling.css'
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
-function IVBadge({ label, color, iv }) {
-  return (
-    <span className="iv-badge" style={{ background: color + '22', color }}>
-      {label} · {iv.toFixed(3)}
-    </span>
-  )
-}
-
-function WoeBinTable({ bins }) {
-  return (
-    <div className="woe-bin-table-wrap">
-      <table className="woe-bin-table">
-        <thead>
-          <tr>
-            <th>Bin</th>
-            <th>N</th>
-            <th>Événements</th>
-            <th>Non-événements</th>
-            <th>Taux événement</th>
-            <th>WOE</th>
-            <th>IV contrib</th>
-          </tr>
-        </thead>
-        <tbody>
-          {bins.map((b, i) => (
-            <tr key={i} className={b.is_missing ? 'bin-row-missing' : ''}>
-              <td className="bin-label">
-                {b.is_missing
-                  ? <span className="missing-tag">manquant</span>
-                  : b.bin}
-              </td>
-              <td>{b.n_total.toLocaleString()}</td>
-              <td>{b.n_events}</td>
-              <td>{b.n_non_events}</td>
-              <td>{(b.event_rate * 100).toFixed(1)}%</td>
-              <td>
-                <span className="woe-value" style={{ color: b.woe >= 0 ? '#10b981' : '#ef4444' }}>
-                  {b.woe >= 0 ? '+' : ''}{b.woe.toFixed(3)}
-                </span>
-              </td>
-              <td style={{ color: '#6366f1', fontWeight: 600 }}>
-                {b.iv_contrib.toFixed(4)}
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  )
-}
-
-function TargetCard({ candidate, selected, onSelect }) {
-  const pct = (candidate.event_rate * 100).toFixed(1)
-  const isBalanced = candidate.balance < 0.15
-  return (
-    <div
-      className={`target-card ${selected ? 'target-card-selected' : ''}`}
-      onClick={() => onSelect(candidate.column)}
-    >
-      <div className="target-card-top">
-        <span className="target-col-name">{candidate.column}</span>
-        {selected && <span className="target-selected-dot" />}
-      </div>
-      <div className="target-values">
-        {candidate.values.map(v => (
-          <span key={v} className="target-val-chip">{v}</span>
-        ))}
-      </div>
-      <div className="target-rate-bar-wrap">
-        <div className="target-rate-bar" style={{ width: `${pct}%` }} />
-      </div>
-      <div className="target-rate-label">
-        <span>Taux événement : <strong>{pct}%</strong></span>
-        {isBalanced
-          ? <span className="target-tag-ok">Équilibré</span>
-          : <span className="target-tag-warn">Déséquilibré</span>}
-      </div>
-      {candidate.n_missing > 0 && (
-        <div className="target-missing-warn">
-          ⚠ {candidate.n_missing} valeur{candidate.n_missing > 1 ? 's' : ''} manquante{candidate.n_missing > 1 ? 's' : ''}
-        </div>
-      )}
-    </div>
-  )
-}
-
 // ── ROC Curve SVG ─────────────────────────────────────────────────────────────
 function RocCurve({ roc, color = '#6366f1', label }) {
   if (!roc) return null
@@ -254,6 +167,91 @@ const MODEL_META = {
   random_forest: { name: 'Random Forest',         color: '#3b82f6', icon: '🌳' },
 }
 
+// ── Classement comparatif des modèles + déploiement ──────────────────────────
+function ModelLeaderboard({ results, cleaningSession, onNavigate }) {
+  const [deployState, setDeployState] = useState({})   // { model: 'idle'|'deploying'|'done'|'error' }
+
+  const rows = Object.entries(results)
+    .filter(([, r]) => r?.results)
+    .map(([m, r]) => ({
+      model: m,
+      meta:  MODEL_META[m] || { name: m, color: '#6b7280', icon: '🤖' },
+      auc:   r.results.auc_test,
+      gini:  r.results.gini_test,
+      ks:    r.results.ks_test,
+    }))
+    .sort((a, b) => b.auc - a.auc)
+
+  if (rows.length === 0) return null
+  const best   = rows[0].model
+  const maxAuc = rows[0].auc || 1
+  const anyDeployed = Object.values(deployState).includes('done')
+
+  async function deploy(modelType) {
+    setDeployState(s => ({ ...s, [modelType]: 'deploying' }))
+    try {
+      const fd = new FormData()
+      fd.append('session_id', cleaningSession)
+      fd.append('model_type', modelType)
+      const r = await fetch('/api/deployment/export', { method: 'POST', body: fd })
+      const data = await r.json()
+      if (!r.ok || !data.success) throw new Error(data.error || 'Échec du déploiement')
+      setDeployState(s => ({ ...s, [modelType]: 'done' }))
+    } catch {
+      setDeployState(s => ({ ...s, [modelType]: 'error' }))
+    }
+  }
+
+  function deployLabel(st) {
+    if (st === 'deploying') return '⏳ …'
+    if (st === 'done')      return '✓ Déployé'
+    if (st === 'error')     return '✗ Réessayer'
+    return '🚀 Déployer'
+  }
+
+  return (
+    <div className="dm-leaderboard">
+      <div className="dm-leaderboard-head">
+        <span className="dm-leaderboard-title">🏁 Comparaison des modèles</span>
+        <span className="dm-leaderboard-sub">test set · trié par AUC · déployez le modèle choisi</span>
+      </div>
+      <div className="dm-leaderboard-rows">
+        {rows.map(r => {
+          const st = deployState[r.model] || 'idle'
+          return (
+            <div key={r.model} className={`dm-lb-row ${r.model === best ? 'dm-lb-best' : ''}`}>
+              <span className="dm-lb-rank">{r.model === best ? '🏆' : ''}</span>
+              <span className="dm-lb-name" style={{ color: r.meta.color }}>
+                {r.meta.icon} {r.meta.name}
+              </span>
+              <div className="dm-lb-bar-track">
+                <div className="dm-lb-bar" style={{ width: `${(r.auc / maxAuc) * 100}%`, background: r.meta.color }} />
+              </div>
+              <span className="dm-lb-metrics">
+                <span className="dm-lb-auc">{(r.auc * 100).toFixed(1)}%</span>
+                <span className="dm-lb-sub">Gini {(r.gini * 100).toFixed(0)} · KS {(r.ks * 100).toFixed(0)}</span>
+              </span>
+              <button
+                className={`dm-deploy-btn ${st}`}
+                disabled={st === 'deploying' || st === 'done'}
+                onClick={() => deploy(r.model)}
+              >
+                {deployLabel(st)}
+              </button>
+            </div>
+          )
+        })}
+      </div>
+      {anyDeployed && (
+        <div className="dm-deploy-hint">
+          ✓ Modèle exporté — disponible dans la section{' '}
+          <button className="dm-link" onClick={() => onNavigate?.('deployment')}>🚀 Déploiement</button>
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ── Dataset Diagnostic ───────────────────────────────────────────────────────
 function DatasetDiagnostic({ diagnostic }) {
   if (!diagnostic) return null
@@ -382,29 +380,38 @@ function ModelResultCard({ modelType, result, error, running }) {
                   </div>
                 )}
                 <div className="model-cv-note">
-                  CV {result.results.cv_folds} folds · train {result.results.n_train} obs · test {result.results.n_test} obs · {result.results.n_features} features
+                  CV {result.results.cv_folds} folds · train {result.results.n_train} · test {result.results.n_test} · {result.results.n_features} features
                 </div>
-                {result.results.tuning && (
-                  <div className="model-tuning-note">
-                    🔍 RandomSearch · {result.results.tuning.strategy} · {result.results.tuning.n_candidates}/{result.results.tuning.grid_size} combos
-                    · scoring <strong>{result.results.tuning.scoring || 'roc_auc'}</strong>
-                    · {result.results.tuning.scoring === 'average_precision' ? 'AP' : 'AUC'} CV {result.results.tuning.best_auc_cv}
-                  </div>
-                )}
-                {result.results.resampling && result.results.resampling.method !== 'none' && (
-                  <div className="model-resample-note">
-                    {result.results.resampling.method === 'undersample' && '⬇ Sous-échantillonnage'}
-                    {result.results.resampling.method === 'oversample'  && '⬆ SMOTE'}
-                    {result.results.resampling.method === 'combined'    && '⇅ SMOTE + Tomek'}
-                    {' '}· {result.results.resampling.n_before.toLocaleString()} → {result.results.resampling.n_after.toLocaleString()} obs
-                  </div>
-                )}
-                {result.pca_report && (
-                  <div className="model-pca-note">
-                    ACP : {result.pca_report.n_components} composantes
-                    ({(result.pca_report.total_variance_kept * 100).toFixed(0)}% variance)
-                  </div>
-                )}
+                <div className="model-meta-chips">
+                  {result.results.tuning && (
+                    <span className="dm-meta-chip dm-meta-chip--info"
+                          title={`${result.results.tuning.n_candidates}/${result.results.tuning.grid_size} combos · scoring ${result.results.tuning.scoring || 'roc_auc'}`}>
+                      🔍 Tuning · {result.results.tuning.scoring === 'average_precision' ? 'AP' : 'AUC'} <strong>{result.results.tuning.best_score_cv ?? '—'}</strong>
+                    </span>
+                  )}
+                  {result.results.pca_auto && (
+                    <span className={`dm-meta-chip ${result.results.pca_auto.applied ? 'dm-meta-chip--ok' : 'dm-meta-chip--off'}`}
+                          title={result.results.pca_auto.applied
+                            ? `${result.results.pca_auto.n_features_original} → ${result.results.pca_auto.n_features_after} features · AUC ${result.results.pca_auto.baseline_auc?.toFixed(3)} → ${result.results.pca_auto.best_auc_pca?.toFixed(3)}`
+                            : result.results.pca_auto.reason}>
+                      {result.results.pca_auto.applied
+                        ? <>ACP ✓ <strong>{result.results.pca_auto.n_features_original}→{result.results.pca_auto.n_features_after}</strong></>
+                        : 'ACP ✗'}
+                    </span>
+                  )}
+                  {result.results.calibration && (
+                    <span className="dm-meta-chip dm-meta-chip--ok"
+                          title={`Probabilités calibrées · ${result.results.calibration.cv}-fold`}>
+                      🎯 Calibré · <strong>{result.results.calibration.method === 'isotonic' ? 'isotonic' : 'sigmoid'}</strong>
+                    </span>
+                  )}
+                  {result.results.early_stopping && (
+                    <span className="dm-meta-chip dm-meta-chip--ok"
+                          title="Nombre d'arbres trouvé automatiquement par early stopping">
+                      🌳 <strong>{result.results.early_stopping.n_estimators}</strong> arbres
+                    </span>
+                  )}
+                </div>
               </div>
             </div>
           )}
@@ -433,7 +440,7 @@ function ModelResultCard({ modelType, result, error, running }) {
 }
 
 // ── Composant principal ───────────────────────────────────────────────────────
-export default function DataModelling({ cleaningSession }) {
+export default function DataModelling({ cleaningSession, onNavigate }) {
   const [phase,        setPhase]        = useState('idle')
   const [error,        setError]        = useState(null)
   const [datamartInfo, setDatamartInfo] = useState(null)   // { target_col, logit, tree }
@@ -442,9 +449,6 @@ export default function DataModelling({ cleaningSession }) {
   // ── Training state ────────────────────────────────────────────────────────
   const [trainConfig, setTrainConfig] = useState({
     rawModels:   { xgboost: true, lightgbm: true, random_forest: true },
-    usePca:     false,
-    nComponents: null,
-    resampling:  'none',
     useTuning:   false,
     nIter:       20,
   })
@@ -458,10 +462,18 @@ export default function DataModelling({ cleaningSession }) {
   const [dmInspData,    setDmInspData]    = useState({})   // { logit: {...}, tree: {...} }
   const [dmInspLoading, setDmInspLoading] = useState(false)
 
-  const prevSessionRef = useRef(null)
+  const prevSessionRef      = useRef(null)
+  const abortControllersRef = useRef({})
+  const trainRunIdRef       = useRef(0)
 
   // ── Reset centralisé ──────────────────────────────────────────────────────
   function resetModelling() {
+    // Invalide toute chaîne d'entraînement séquentielle en cours
+    trainRunIdRef.current++
+    // Annule toutes les requêtes d'entraînement en cours
+    Object.values(abortControllersRef.current).forEach(ctrl => ctrl.abort())
+    abortControllersRef.current = {}
+
     setPhase('idle')
     setError(null)
     setDatamartInfo(null)
@@ -505,26 +517,29 @@ export default function DataModelling({ cleaningSession }) {
 
   // ── Entraînement d'un modèle ──────────────────────────────────────────────
   async function trainModel(modelType) {
+    const controller = new AbortController()
+    abortControllersRef.current[modelType] = controller
+
     setTrainRunning(prev => ({ ...prev, [modelType]: true }))
     setTrainErrors(prev => ({ ...prev, [modelType]: null }))
 
     const fd = new FormData()
     fd.append('session_id', cleaningSession)
     fd.append('model_type', modelType)
-    fd.append('use_pca',    String(trainConfig.usePca))
-    fd.append('resampling', trainConfig.resampling)
     fd.append('use_tuning', String(trainConfig.useTuning))
-    fd.append('n_iter',     String(trainConfig.nIter))
-    if (trainConfig.nComponents) fd.append('n_components', String(trainConfig.nComponents))
+    fd.append('n_iter',     String(parseInt(trainConfig.nIter) || 20))
 
     try {
-      const res  = await fetch('/api/data-modelling/train', { method: 'POST', body: fd })
+      const res  = await fetch('/api/data-modelling/train', { method: 'POST', body: fd, signal: controller.signal })
       const data = await res.json()
       if (!res.ok || !data.success) throw new Error(data.error || `Erreur HTTP ${res.status}`)
       setTrainResults(prev => ({ ...prev, [modelType]: data }))
     } catch (e) {
-      setTrainErrors(prev => ({ ...prev, [modelType]: e.message }))
+      if (e.name !== 'AbortError') {
+        setTrainErrors(prev => ({ ...prev, [modelType]: e.message }))
+      }
     } finally {
+      delete abortControllersRef.current[modelType]
       setTrainRunning(prev => ({ ...prev, [modelType]: false }))
     }
   }
@@ -556,13 +571,34 @@ export default function DataModelling({ cleaningSession }) {
   }
 
   async function launchTraining() {
+    const treeEnabled = Object.entries(trainConfig.rawModels).filter(([, on]) => on)
+    if (treeEnabled.length === 0) {
+      setError('Sélectionnez au moins un modèle arborescent pour l\'entraînement.')
+      return
+    }
+    setError(null)
     setPhase('training')
     setTrainResults({})
     setTrainErrors({})
-    trainModel('logit')
-    Object.entries(trainConfig.rawModels).forEach(([m, enabled]) => {
-      if (enabled) trainModel(m)
-    })
+
+    // Entraînement séquentiel : évite la sur-souscription CPU (chaque modèle
+    // utilise déjà n_jobs=-1). La chaîne s'arrête si reset/abort change le runId.
+    const runId = ++trainRunIdRef.current
+    const queue = ['logit', ...treeEnabled.map(([m]) => m)]
+    for (const m of queue) {
+      if (trainRunIdRef.current !== runId) break
+      await trainModel(m)
+    }
+  }
+
+  // ── Relance séquentielle des modèles tree-based ───────────────────────────
+  async function retrainAll() {
+    const runId = ++trainRunIdRef.current
+    for (const [m, en] of Object.entries(trainConfig.rawModels)) {
+      if (!en) continue
+      if (trainRunIdRef.current !== runId) break
+      await trainModel(m)
+    }
   }
 
   // ── Rendu : pas de session ────────────────────────────────────────────────
@@ -826,7 +862,7 @@ export default function DataModelling({ cleaningSession }) {
                       type="number"
                       min={5} max={100}
                       value={trainConfig.nIter}
-                      onChange={e => setTrainConfig(c => ({ ...c, nIter: parseInt(e.target.value) || 20 }))}
+                      onChange={e => setTrainConfig(c => ({ ...c, nIter: e.target.value }))}
                     />
                     <span style={{ fontSize: '0.75rem', color: '#9ca3af' }}>
                       (= grille complète si &lt; taille grid)
@@ -834,64 +870,20 @@ export default function DataModelling({ cleaningSession }) {
                   </div>
                 )}
               </div>
-              <div className="train-config-field">
-                <label className="train-check-label">
-                  <input
-                    type="checkbox"
-                    checked={trainConfig.usePca}
-                    onChange={e => setTrainConfig(c => ({ ...c, usePca: e.target.checked }))}
-                  />
-                  Appliquer l'ACP (auto 95% variance)
-                </label>
-                {trainConfig.usePca && (
-                  <input
-                    className="train-ncomp-input"
-                    type="number"
-                    placeholder="Nombre de composantes (auto si vide)"
-                    min={1}
-                    value={trainConfig.nComponents ?? ''}
-                    onChange={e => setTrainConfig(c => ({
-                      ...c, nComponents: e.target.value ? parseInt(e.target.value) : null
-                    }))}
-                  />
-                )}
+              <div className="train-config-field train-pca-info">
+                ACP validée automatiquement par cross-validation — appliquée uniquement si l'AUC ne diminue pas de plus de 0.5pt
               </div>
               <button
                 className="btn-train-run"
                 style={{ '--btnc': '#f59e0b' }}
                 disabled={Object.values(trainRunning).some(Boolean)}
-                onClick={() => Object.entries(trainConfig.rawModels).forEach(([m, en]) => {
-                  if (en) trainModel(m)
-                })}
+                onClick={retrainAll}
               >
                 ↺ Relancer tree-based
               </button>
             </div>
           </div>
 
-          {/* Rééchantillonnage */}
-          <div className="train-resample-row">
-            <span className="train-resample-label">Rééchantillonnage</span>
-            <div className="train-resample-options">
-              {[
-                ['none',        'Aucun'],
-                ['undersample', 'Sous-échantillonnage'],
-                ['oversample',  'Sur-échantillonnage (SMOTE)'],
-                ['combined',    'Combiné (SMOTE + Tomek)'],
-              ].map(([val, lbl]) => (
-                <label key={val} className={`train-resample-chip ${trainConfig.resampling === val ? 'active' : ''}`}>
-                  <input
-                    type="radio"
-                    name="resampling"
-                    value={val}
-                    checked={trainConfig.resampling === val}
-                    onChange={() => setTrainConfig(c => ({ ...c, resampling: val }))}
-                  />
-                  {lbl}
-                </label>
-              ))}
-            </div>
-          </div>
 
           {phase === 'ready' && Object.keys(trainResults).length === 0 && (
             <button className="btn-dm-launch" onClick={launchTraining}>
@@ -905,6 +897,7 @@ export default function DataModelling({ cleaningSession }) {
             const diagnostic  = firstResult?.results?.dataset_diagnostic
             return diagnostic ? <DatasetDiagnostic diagnostic={diagnostic} /> : null
           })()}
+          <ModelLeaderboard results={trainResults} cleaningSession={cleaningSession} onNavigate={onNavigate} />
           <div className="train-results-grid">
             {['logit', 'xgboost', 'lightgbm', 'random_forest'].map(m => {
               const hasResult = !!trainResults[m]

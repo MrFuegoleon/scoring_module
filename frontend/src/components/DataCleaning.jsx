@@ -813,7 +813,6 @@ export default function DataCleaning({ activeFile, setCleaningSession }) {
     setPipelineResult(null)
     setCardinalityThresh(10); setNBinsPipeline(10)
     setExcludedCols(new Set())
-    setVerificationData(null); setShowVerification(false)
     setActiveTab('types')
     setLogs([])
     setPipelineState('idle')

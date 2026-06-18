@@ -15,6 +15,9 @@ venv/
 backend/uploads/
 backend/reports/
 
+# Modèles déployés (bundles joblib)
+python/models/
+
 
 # Rapports générés (trop lourds pour git)
 dashboard_influenceurs.html

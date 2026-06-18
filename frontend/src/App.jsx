@@ -3,20 +3,23 @@ import { useState } from 'react'
 import DataQuality from './components/DataQuality'
 import DataCleaning from './components/DataCleaning'
 import DataModelling from './components/DataModelling'
-import PipelineComplet from './components/PipelineComplet'
+import Deploiement from './components/Deploiement'
+import MultilabelClassification from './components/MultilabelClassification'
 
 const NAV_ITEMS = [
-  { key: 'quality',   label: 'Data Quality',    icon: '🔍', badge: 'Actif',   badgeClass: 'badge-active' },
-  { key: 'cleaning',  label: 'Data Cleaning',   icon: '🧹', badge: 'Actif', badgeClass: 'badge-active' },
-  { key: 'modelling', label: 'Data Modelling',  icon: '🤖', badge: 'Bientôt', badgeClass: 'badge-soon'   },
-  { key: 'pipeline',  label: 'Pipeline Complet', icon: '⚡', badge: 'Bientôt', badgeClass: 'badge-soon'   },
+  { key: 'quality',     label: 'Data Quality',           icon: '🔍', badge: 'Actif',   badgeClass: 'badge-active' },
+  { key: 'cleaning',    label: 'Data Cleaning',          icon: '🧹', badge: 'Actif',   badgeClass: 'badge-active' },
+  { key: 'modelling',   label: 'Data Modelling',         icon: '🤖', badge: 'Actif',   badgeClass: 'badge-active' },
+  { key: 'multilabel',  label: 'Multilabel',             icon: '🎯', badge: 'Actif',   badgeClass: 'badge-active' },
+  { key: 'deployment',  label: 'Déploiement',            icon: '🚀', badge: 'Actif',   badgeClass: 'badge-active' },
 ]
 
 const COMPONENTS = {
-  quality:   DataQuality,
-  cleaning:  DataCleaning,
-  modelling: DataModelling,
-  pipeline:  PipelineComplet,
+  quality:    DataQuality,
+  cleaning:   DataCleaning,
+  modelling:  DataModelling,
+  multilabel: MultilabelClassification,
+  deployment: Deploiement,
 }
 
 export default function App() {
@@ -146,6 +149,8 @@ export default function App() {
                   theme={theme}
                   cleaningSession={cleaningSession}
                   setCleaningSession={setCleaningSession}
+                  active={activeNav.key === item.key}
+                  onNavigate={(key) => setActiveIndex(NAV_ITEMS.findIndex(n => n.key === key))}
                 />
               </div>
             )

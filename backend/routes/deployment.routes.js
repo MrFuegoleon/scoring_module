@@ -7,11 +7,12 @@ import fs from "fs";
 const router = express.Router();
 const upload = multer({ dest: "uploads/" });
 
-// Proxy GET → Flask (ex: /pipeline/download/<type>?session_id=...)
+const FLASK = "http://localhost:5001/api/deployment";
+
+// GET → Flask (list /models, /schema, /download binaire)
 router.get("/*", async (req, res) => {
-  const flaskUrl = `http://localhost:5001/api/data-cleaning${req.path}`;
   try {
-    const response = await axios.get(flaskUrl, {
+    const response = await axios.get(`${FLASK}${req.path}`, {
       params: req.query,
       responseType: "stream",
     });
@@ -24,25 +25,29 @@ router.get("/*", async (req, res) => {
   }
 });
 
-// Proxy générique POST → Flask — gère tous les sous-chemins (y compris pipeline/init,
-// pipeline/confirm) et rend le fichier optionnel (confirm et missing n'en ont pas).
+// DELETE → Flask
+router.delete("/*", async (req, res) => {
+  try {
+    const response = await axios.delete(`${FLASK}${req.path}`, { params: req.query });
+    res.json(response.data);
+  } catch (e) {
+    const status = e.response?.status || 500;
+    const message = e.response?.data?.error || e.message || "Erreur interne";
+    res.status(status).json({ error: message });
+  }
+});
+
+// POST → Flask (export : champs seuls ; predict : fichier CSV optionnel)
 router.post("/*", upload.single("file"), async (req, res) => {
-  const flaskUrl = `http://localhost:5001/api/data-cleaning${req.path}`;
-
   const form = new FormData();
-
-  // Fichier présent uniquement sur /pipeline/init
   if (req.file) {
     form.append("file", fs.createReadStream(req.file.path), req.file.originalname);
   }
-
-  // Champs texte : session_id, confirmed_types, etc.
   for (const [key, value] of Object.entries(req.body || {})) {
     form.append(key, value);
   }
-
   try {
-    const response = await axios.post(flaskUrl, form, {
+    const response = await axios.post(`${FLASK}${req.path}`, form, {
       headers: form.getHeaders(),
       maxContentLength: Infinity,
       maxBodyLength: Infinity,

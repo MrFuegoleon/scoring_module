@@ -2,19 +2,15 @@ import numpy as np
 import pandas as pd
 from sklearn.linear_model import LogisticRegression
 from sklearn.ensemble import RandomForestClassifier
-from sklearn.model_selection import StratifiedKFold, cross_val_predict, train_test_split, RandomizedSearchCV
-from sklearn.preprocessing import LabelEncoder
+from sklearn.model_selection import StratifiedKFold, cross_val_predict, cross_val_score, train_test_split, RandomizedSearchCV
+from sklearn.pipeline import Pipeline
+from sklearn.preprocessing import LabelEncoder, StandardScaler
 from sklearn.decomposition import PCA
+from sklearn.calibration import CalibratedClassifierCV
 from sklearn.impute import SimpleImputer
 from sklearn.metrics import roc_auc_score, roc_curve, confusion_matrix, f1_score, balanced_accuracy_score
-from scipy.stats import gaussian_kde
+from utils import safe_kde, roc_sample
 
-try:
-    from imblearn.over_sampling import SMOTE
-    from imblearn.under_sampling import RandomUnderSampler
-    HAS_IMBLEARN = True
-except ImportError:
-    HAS_IMBLEARN = False
 
 try:
     import xgboost as xgb
@@ -38,7 +34,8 @@ PARAM_GRIDS = {
         'class_weight': [None, 'balanced'],
     },
     'random_forest': {
-        'n_estimators': [100, 200, 400],
+        # n_estimators fixé haut (300) dans le constructeur — plus c'est élevé mieux c'est,
+        # jamais d'overfit → inutile de gaspiller du budget de recherche dessus.
         'max_depth': [None, 10, 20, 30],
         'min_samples_split': [2, 5, 10],
         'min_samples_leaf': [1, 2, 4],            # régularise mieux que split seul
@@ -46,25 +43,27 @@ PARAM_GRIDS = {
         'class_weight': [None, 'balanced'],
     },
     'xgboost': {
-        'n_estimators': [100, 200, 400],
+        # n_estimators trouvé par early stopping (hors grille)
         'max_depth': [3, 5, 7, 9],
-        'learning_rate': [0.01, 0.05, 0.1, 0.2],
+        'learning_rate': [0.01, 0.03, 0.05, 0.1],
         'subsample': [0.7, 0.8, 1.0],
         'colsample_bytree': [0.7, 0.8, 1.0],
         'min_child_weight': [1, 3, 5],
         'gamma': [0, 0.1, 0.3],
         'reg_alpha': [0, 0.1, 1],
+        'reg_lambda': [0.5, 1, 2, 5],           
     },
     'lightgbm': {
-        'n_estimators': [100, 200, 400],
+        # n_estimators trouvé par early stopping (hors grille)
         'max_depth': [-1, 5, 10],
-        'learning_rate': [0.01, 0.05, 0.1],
+        'learning_rate': [0.01, 0.03, 0.05, 0.1],
         'num_leaves': [15, 31, 63, 127],
         'min_child_samples': [10, 20, 50],
-        'subsample': [0.7, 0.8, 1.0],
+        'subsample': [0.7, 0.8, 1.0],             # actif via subsample_freq=1 (constructeur)
         'colsample_bytree': [0.7, 0.8, 1.0],
         'reg_alpha': [0, 0.1, 1],
-        # 'importance_type' fixé dans le constructeur (n'affecte pas la perf)
+        'reg_lambda': [0, 0.1, 1],               
+        'min_split_gain': [0.0, 0.1],
     },
 }
 
@@ -111,66 +110,47 @@ class TrainingService:
         class_names = [str(vals[0]), str(vals[1])]
         return X, y, list(X.columns), class_names
 
-    # ── ACP optionnelle ───────────────────────────────────────────────────────
-    @staticmethod
-    def apply_pca(X: pd.DataFrame, n_components: int | None = None,
-                  variance_threshold: float = 0.95):
-        imp    = SimpleImputer(strategy='median')
-        X_imp  = imp.fit_transform(X.values.astype(float))
-
-        pca_full = PCA().fit(X_imp)
-        cum_var  = np.cumsum(pca_full.explained_variance_ratio_)
-
-        if n_components is None:
-            n_components = int(np.searchsorted(cum_var, variance_threshold) + 1)
-        n_components = min(n_components, X_imp.shape[1], X_imp.shape[0] - 1)
-
-        pca   = PCA(n_components=n_components)
-        X_pca = pca.fit_transform(X_imp)
-        X_out = pd.DataFrame(X_pca,
-                             columns=[f"PC{i+1}" for i in range(n_components)],
-                             index=X.index)
-
-        evr = pca.explained_variance_ratio_
-        return X_out, {
-            'n_components':        n_components,
-            'n_input_features':    X.shape[1],
-            'explained_variance':  [round(float(v), 4) for v in evr],
-            'cumulative_variance': [round(float(v), 4) for v in np.cumsum(evr)],
-            'total_variance_kept': round(float(evr.sum()), 4),
-        }
-
     # ── Métriques ─────────────────────────────────────────────────────────────
-
-    @staticmethod
-    def _safe_kde(data: np.ndarray, x: np.ndarray) -> np.ndarray:
-        try:
-            return gaussian_kde(data)(x)
-        except np.linalg.LinAlgError:
-            # Variance quasi-nulle (proba concentrées) → jitter pour régulariser
-            rng = np.random.default_rng(42)
-            jittered = np.clip(data + rng.normal(0, 1e-4, size=len(data)), 0, 1)
-            return gaussian_kde(jittered)(x)
 
     @staticmethod
     def _ks(y_true, y_prob):
         fpr, tpr, _ = roc_curve(y_true, y_prob)
         return round(float(np.max(tpr - fpr)), 4)
 
+    # ── Importance des features (gère le wrapper de calibration) ──────────────
     @staticmethod
-    def _roc_sample(fpr, tpr, n=120):
-        idx = np.linspace(0, len(fpr) - 1, min(n, len(fpr))).astype(int)
-        return {
-            'fpr': [round(float(fpr[i]), 4) for i in idx],
-            'tpr': [round(float(tpr[i]), 4) for i in idx],
-        }
+    def _model_importance(model) -> tuple[list, str]:
+        """
+        Extrait l'importance des features d'un modèle brut (coef_ / feature_importances_)
+        ou d'un CalibratedClassifierCV (moyenne sur les estimateurs des folds).
+        """
+        if hasattr(model, 'coef_'):
+            return [float(abs(v)) for v in model.coef_[0]], 'Coefficient |β|'
+        if hasattr(model, 'feature_importances_'):
+            return [float(v) for v in model.feature_importances_], 'Feature importance'
+
+        # CalibratedClassifierCV : agréger les estimateurs internes des folds
+        calibrated = getattr(model, 'calibrated_classifiers_', None)
+        if calibrated:
+            imps = []
+            for cc in calibrated:
+                est = getattr(cc, 'estimator', None) or getattr(cc, 'base_estimator', None)
+                if est is None:
+                    continue
+                if hasattr(est, 'feature_importances_'):
+                    imps.append(np.asarray(est.feature_importances_, dtype=float))
+                elif hasattr(est, 'coef_'):
+                    imps.append(np.abs(np.asarray(est.coef_[0], dtype=float)))
+            if imps:
+                return [float(v) for v in np.mean(imps, axis=0)], 'Feature importance'
+
+        return [], 'N/A'
 
     # ── Helper : seuil de classification optimal (sans data leakage) ─────────
     @staticmethod
     def _find_optimal_threshold(y_true, y_prob, strategy: str = 'f1') -> float:
         if strategy == 'youden':
-            _, tpr, thresholds = roc_curve(y_true, y_prob)
-            fpr, _, _          = roc_curve(y_true, y_prob)
+            fpr, tpr, thresholds = roc_curve(y_true, y_prob)
             return float(thresholds[np.argmax(tpr - fpr)])
         thresholds = np.linspace(0.05, 0.95, 91)
         if strategy == 'balanced_accuracy':
@@ -194,13 +174,11 @@ class TrainingService:
 
     # ── Helper : n_iter adaptatif selon la taille de la grille ───────────────
     @staticmethod
-    def _adaptive_n_iter(grid_size, n_iter_requested: int,
-                         target_coverage: float = 0.05) -> int:
+    def _adaptive_n_iter(grid_size, n_iter_requested: int) -> int:
         if grid_size == float('inf'):
-            return max(n_iter_requested, 50)
-        if grid_size <= n_iter_requested:
-            return int(grid_size)
-        return min(max(n_iter_requested, int(grid_size * target_coverage)), 300)
+            return n_iter_requested
+        # Ne jamais dépasser la taille de la grille, mais respecter le choix utilisateur
+        return min(n_iter_requested, int(grid_size))
 
     # ── Helper : validation du dataset + cv_folds recommandés ────────────────
     @staticmethod
@@ -241,29 +219,200 @@ class TrainingService:
         except TypeError:
             return float('inf')
 
+    # ── Helper : nombre d'arbres optimal par early stopping (boosting) ────────
+    @staticmethod
+    def _early_stopping_n_estimators(model_type: str, params: dict,
+                                     X_train, y_train,
+                                     max_trees: int = 2000, patience: int = 50):
+        """
+        Trouve le nombre optimal d'arbres via early stopping sur un split interne
+        train/validation. Retourne un n_estimators à FIXER pour la suite (CV + fit
+        final) — plus efficace et plus robuste que de tuner n_estimators dans la grille.
+        Retourne None si indisponible (fallback sur le défaut du modèle).
+        """
+        try:
+            X_es, X_val, y_es, y_val = train_test_split(
+                X_train, y_train, test_size=0.2, stratify=y_train, random_state=42
+            )
+        except ValueError:
+            return None
+
+        p = dict(params)
+        p.pop('n_estimators', None)
+        try:
+            if model_type == 'xgboost':
+                m = xgb.XGBClassifier(
+                    random_state=42, eval_metric='logloss', verbosity=0,
+                    n_estimators=max_trees, early_stopping_rounds=patience, **p,
+                )
+                m.fit(X_es, y_es, eval_set=[(X_val, y_val)], verbose=False)
+                best = getattr(m, 'best_iteration', None)
+                return max(50, int(best) + 1) if best is not None else None
+            if model_type == 'lightgbm':
+                m = lgb.LGBMClassifier(
+                    random_state=42, verbosity=-1, importance_type='gain',
+                    subsample_freq=1, n_estimators=max_trees, **p,
+                )
+                m.fit(X_es, y_es, eval_set=[(X_val, y_val)],
+                      callbacks=[lgb.early_stopping(patience, verbose=False)])
+                best = getattr(m, 'best_iteration_', None)
+                return max(50, int(best)) if best else None
+        except Exception:
+            return None
+        return None
+
+    # ── ACP automatique validée par CV sur l'AUC ─────────────────────────────
+    @staticmethod
+    def _auto_pca(X_train: np.ndarray, y_train: np.ndarray,
+                  cv_folds: int = 3,
+                  tolerance: float = 0.005) -> tuple:
+        """
+        Détermine automatiquement si l'ACP améliore ou maintient l'AUC en CV.
+
+        Logique :
+          1. AUC baseline sans ACP (LR rapide, 3-fold CV)
+          2. AUC avec ACP pour plusieurs valeurs de k (20/40/60/80 % des features)
+             — k validé sur l'AUC, pas sur la variance expliquée
+          3. Si best_AUC_pca >= baseline_AUC - tolerance → ACP acceptée
+             Sinon → ACP rejetée, features originales conservées
+
+        Returns : (should_apply: bool, fitted_pca | None, report: dict)
+        """
+        n_features = X_train.shape[1]
+        n_samples  = X_train.shape[0]
+
+        # Pas de réduction utile si trop peu de features
+        if n_features < 5:
+            return False, None, {
+                'applied': False,
+                'reason':  'Trop peu de features pour l\'ACP',
+                'n_features_original': n_features,
+            }
+
+        # Modèle léger pour la validation — indépendant du modèle final
+        # lbffs : bien plus rapide que saga pour une pénalité L2 (proxy de validation)
+        quick_model = LogisticRegression(max_iter=500, random_state=42,
+                                         solver='lbfgs', penalty='l2')
+        cv = StratifiedKFold(n_splits=min(cv_folds, 3), shuffle=True, random_state=42)
+
+        # Baseline sans ACP
+        try:
+            baseline_auc = float(
+                cross_val_score(quick_model, X_train, y_train,
+                                cv=cv, scoring='roc_auc').mean()
+            )
+        except Exception:
+            return False, None, {
+                'applied': False,
+                'reason':  'Erreur baseline CV',
+                'n_features_original': n_features,
+            }
+
+        # Candidats : proportions de n_features, bornés à [2, n_features-1]
+        max_k = min(n_features - 1, n_samples - 2)
+        raw_candidates = [
+            max(2, int(max_k * 0.20)),
+            max(2, int(max_k * 0.40)),
+            max(2, int(max_k * 0.60)),
+            max(2, int(max_k * 0.80)),
+        ]
+        candidates = sorted(set(k for k in raw_candidates if 1 < k < n_features))
+
+        evaluated = []
+        for k in candidates:
+            try:
+                pipe   = Pipeline([('scaler', StandardScaler()),
+                                   ('pca', PCA(n_components=k, random_state=42)),
+                                   ('clf', quick_model)])
+                scores = cross_val_score(pipe, X_train, y_train,
+                                         cv=cv, scoring='roc_auc')
+                evaluated.append({
+                    'n_components': k,
+                    'auc':          round(float(scores.mean()), 4),
+                    'std':          round(float(scores.std()),  4),
+                })
+            except Exception:
+                pass
+
+        if not evaluated:
+            return False, None, {
+                'applied':             False,
+                'reason':              'Tous les candidats ont échoué',
+                'baseline_auc':        round(baseline_auc, 4),
+                'n_features_original': n_features,
+            }
+
+        best     = max(evaluated, key=lambda r: r['auc'])
+        delta    = round(best['auc'] - baseline_auc, 4)
+        accepted = delta >= -tolerance   # ACP acceptée si perte ≤ tolérance
+
+        fitted_pca = None
+        if accepted:
+            fitted_pca = Pipeline([
+                ('scaler', StandardScaler()),
+                ('pca',    PCA(n_components=best['n_components'], random_state=42)),
+            ])
+            fitted_pca.fit(X_train)
+
+        return accepted, fitted_pca, {
+            'applied':              accepted,
+            'reason':               'ACP acceptée' if accepted else
+                                    f'ACP rejetée — perte AUC = {abs(delta):.4f} > tolérance {tolerance}',
+            'baseline_auc':         round(baseline_auc, 4),
+            'best_n_components':    best['n_components'],
+            'best_auc_pca':         best['auc'],
+            'auc_delta':            delta,
+            'tolerance':            tolerance,
+            'candidates':           evaluated,
+            'n_features_original':  n_features,
+            'n_features_after':     best['n_components'] if accepted else n_features,
+            'variance_explained':   (
+                round(float(fitted_pca.named_steps['pca'].explained_variance_ratio_.sum()), 4)
+                if fitted_pca else None
+            ),
+        }
+
     # ── Entraînement + évaluation ─────────────────────────────────────────────
     @staticmethod
     def train_and_evaluate(X: pd.DataFrame, y: pd.Series,
                            model_type: str, cv_folds: int = 5,
                            test_size: float = 0.2,
-                           resampling: str = 'none',
                            class_names: list = None,
                            use_tuning: bool = False,
-                           n_iter: int = 20) -> dict:
+                           n_iter: int = 20,
+                           X_test_pre=None, y_test_pre=None,
+                           return_artifact: bool = False):
         X_arr = X.values.astype(float)
         y_arr = np.array(y, dtype=int)
+        encoded_features = list(X.columns)   # ordre des features encodées (avant ACP/scaler)
+        post_transformers = []               # transformeurs post-encodage à rejouer au déploiement
 
-        # Split train / test avant toute transformation
-        X_train, X_test, y_train, y_test = train_test_split(
-            X_arr, y_arr, test_size=test_size, stratify=y_arr, random_state=42
-        )
+        if X_test_pre is not None and y_test_pre is not None:
+            # Chemin sans leakage — X/y sont déjà le train, test fourni séparément
+            X_train  = X_arr
+            y_train  = y_arr
+            X_test   = X_test_pre.values.astype(float) if hasattr(X_test_pre, 'values') else np.array(X_test_pre, dtype=float)
+            y_test   = y_test_pre.values.astype(int)   if hasattr(y_test_pre, 'values') else np.array(y_test_pre, dtype=int)
+            n_total  = int(len(y_train) + len(y_test))
+        else:
+            # Chemin legacy — split interne
+            X_train, X_test, y_train, y_test = train_test_split(
+                X_arr, y_arr, test_size=test_size, stratify=y_arr, random_state=42
+            )
+            n_total = int(len(y_arr))
 
-        # Imputation ajustée sur le train uniquement
-        imp     = SimpleImputer(strategy='median')
-        X_train = imp.fit_transform(X_train)
-        X_test  = imp.transform(X_test)
+        # Imputation ajustée sur le train uniquement — seulement si NaN réels présents.
+        # Les datamarts ont déjà fillna(-999) dans _preprocess : SimpleImputer serait un no-op coûteux.
+        if np.isnan(X_train).any() or np.isnan(X_test).any():
+            imp     = SimpleImputer(strategy='median')
+            X_train = imp.fit_transform(X_train)
+            X_test  = imp.transform(X_test)
+            post_transformers.append(imp)
 
-        # ── Validation du dataset + ajustement cv_folds ──────────────────────
+        # Noms de features — mis à jour si l'ACP réduit les dimensions
+        feat_names = list(X.columns)
+
+        # ── Validation du dataset sur les features originales ─────────────────
         cv_folds_requested = cv_folds
         dataset_val = TrainingService._validate_dataset(X_train, y_train)
         if cv_folds > dataset_val['recommended_cv_folds']:
@@ -275,41 +424,43 @@ class TrainingService:
 
         imbalance = TrainingService._detect_imbalance(y_train)
 
-        resampling_info = {'method': resampling, 'n_before': int(len(y_train)), 'n_after': int(len(y_train))}
-
-        if resampling != 'none' and not HAS_IMBLEARN:
-            raise ValueError("imbalanced-learn non installé — pip install imbalanced-learn")
-
-        def _make_sampler():
-            if resampling == 'undersample':
-                return RandomUnderSampler(random_state=42)
-            elif resampling == 'oversample':
-                return SMOTE(random_state=42)
-            elif resampling == 'combined':
-                from imblearn.combine import SMOTETomek
-                return SMOTETomek(random_state=42)
+        # ── ACP automatique — logit uniquement, validée par CV sur l'AUC ─────
+        pca_auto_report = None
+        if model_type == 'logit':
+            pca_applied, fitted_pca, pca_auto_report = TrainingService._auto_pca(
+                X_train, y_train, cv_folds=min(cv_folds, 3)
+            )
+            if pca_applied and fitted_pca is not None:
+                X_train    = fitted_pca.transform(X_train)
+                X_test     = fitted_pca.transform(X_test)
+                feat_names = [f'PC{i + 1}' for i in range(X_train.shape[1])]
+                post_transformers.append(fitted_pca)
+            else:
+                # Fix #5 : le baseline _auto_pca était calculé sur données scalées (StandardScaler
+                # dans le pipeline) — on applique le même scaling si l'ACP est rejetée.
+                _sc        = StandardScaler()
+                X_train    = _sc.fit_transform(X_train)
+                X_test     = _sc.transform(X_test)
+                post_transformers.append(_sc)
 
         # ── RandomSearch optionnel ────────────────────────────────────────────
         tuning_info = None
         best_params = {}
+        early_stopping_info = None
         if use_tuning and model_type in PARAM_GRIDS:
             # Copie de la grille pour pouvoir l'ajuster sans toucher au global
             grid = {k: list(v) if isinstance(v, list) else v
                     for k, v in PARAM_GRIDS[model_type].items()}
 
-            # Éviter la double correction du déséquilibre : si rééchantillonnage
-            # actif, on force class_weight=None
-            if resampling != 'none' and 'class_weight' in grid:
-                grid['class_weight'] = [None]
-
             if model_type == 'logit':
                 base = LogisticRegression(random_state=42)
             elif model_type == 'random_forest':
-                base = RandomForestClassifier(random_state=42, n_jobs=-1)
+                base = RandomForestClassifier(random_state=42, n_jobs=-1, n_estimators=300)
             elif model_type == 'xgboost':
                 base = xgb.XGBClassifier(random_state=42, eval_metric='logloss', verbosity=0)
             elif model_type == 'lightgbm':
-                base = lgb.LGBMClassifier(random_state=42, verbosity=-1, importance_type='gain')
+                base = lgb.LGBMClassifier(random_state=42, verbosity=-1,
+                                          importance_type='gain', subsample_freq=1)
 
             grid_size = TrainingService._compute_grid_size(grid)
 
@@ -318,52 +469,84 @@ class TrainingService:
                 else 'roc_auc'
             )
             n_candidates = TrainingService._adaptive_n_iter(grid_size, n_iter)
-            cv_search    = StratifiedKFold(n_splits=3, shuffle=True, random_state=42)
+            # Fix #3 : cv_search adapté au même cv_folds que l'évaluation principale
+            cv_search    = StratifiedKFold(n_splits=min(cv_folds, 3), shuffle=True, random_state=42)
+            # Fix #2 : error_score=0.0 pour éviter NaN non-sérialisable en JSON
             search       = RandomizedSearchCV(
                 base, grid, n_iter=n_candidates, scoring=search_scoring,
-                cv=cv_search, n_jobs=-1, refit=False, random_state=42, error_score=np.nan,
+                cv=cv_search, n_jobs=-1, refit=False, random_state=42, error_score=0.0,
             )
 
             search.fit(X_train, y_train)
-            best_params = search.best_params_
-            tuning_info = {
-                'strategy':     'random',
-                'scoring':      search_scoring,
-                'best_params':  best_params,
-                'best_auc_cv':  round(float(search.best_score_), 4),
-                'n_candidates': n_candidates,
-                'grid_size':    grid_size if grid_size != float('inf') else 'continuous',
+            best_params  = search.best_params_
+            best_score   = search.best_score_
+            # Fix #2 : garde NaN si tous les candidats ont échoué (score=0.0 suspect)
+            safe_score   = round(float(best_score), 4) if (best_score is not None and not np.isnan(best_score)) else None
+            tuning_info  = {
+                'strategy':         'random',
+                'scoring':          search_scoring,
+                'best_params':      best_params,
+                # Fix #1 : renommé best_score_cv (peut être AP ou AUC selon scoring)
+                'best_score_cv':    safe_score,
+                'n_candidates':     n_candidates,
+                # Fix #4 : n_iter_requested exposé pour transparence si adapté
+                'n_iter_requested': n_iter,
+                'grid_size':        grid_size if grid_size != float('inf') else 'continuous',
             }
 
         # ── Construction du modèle (avec ou sans meilleurs params) ───────────
         if model_type == 'logit':
             p = dict(best_params)
             p.setdefault('max_iter', 1000)
-            p.setdefault('solver', 'saga')
-            p.setdefault('penalty', 'l1')
+            # lbfgs : rapide pour penalty=None/l2. Le tuning passe le solver à saga/liblinear
+            # quand il sélectionne L1 (best_params contient alors 'solver').
+            p.setdefault('solver', 'lbfgs')
+            p.setdefault('penalty', None)
+            if imbalance['is_imbalanced']:
+                p.setdefault('class_weight', 'balanced')
             model = LogisticRegression(random_state=42, **p)
         elif model_type == 'random_forest':
-            model = RandomForestClassifier(random_state=42, n_jobs=-1, **best_params)
+            params = dict(best_params)
+            params.setdefault('n_estimators', 300)   # fixé haut (hors grille)
+            if imbalance['is_imbalanced']:
+                params.setdefault('class_weight', 'balanced')
+            base_model = RandomForestClassifier(random_state=42, n_jobs=-1, **params)
         elif model_type == 'xgboost':
             if not HAS_XGB:
                 raise ValueError("XGBoost non installé — pip install xgboost")
-            model = xgb.XGBClassifier(random_state=42, eval_metric='logloss', verbosity=0, **best_params)
+            xp = dict(best_params)
+            n_es = TrainingService._early_stopping_n_estimators('xgboost', xp, X_train, y_train)
+            if n_es:
+                xp['n_estimators'] = n_es
+                early_stopping_info = {'n_estimators': n_es}
+            base_model = xgb.XGBClassifier(random_state=42, eval_metric='logloss', verbosity=0, **xp)
         elif model_type == 'lightgbm':
             if not HAS_LGB:
                 raise ValueError("LightGBM non installé — pip install lightgbm")
-            model = lgb.LGBMClassifier(random_state=42, verbosity=-1,
-                                       importance_type='gain', **best_params)
+            lp = dict(best_params)
+            n_es = TrainingService._early_stopping_n_estimators('lightgbm', lp, X_train, y_train)
+            if n_es:
+                lp['n_estimators'] = n_es
+                early_stopping_info = {'n_estimators': n_es}
+            base_model = lgb.LGBMClassifier(random_state=42, verbosity=-1,
+                                            importance_type='gain', subsample_freq=1, **lp)
         else:
             raise ValueError(f"Modèle inconnu : {model_type}")
 
-        # Validation croisée — SMOTE appliqué à l'intérieur de chaque fold
+        # ── Calibration des probabilités — modèles d'arbres uniquement ───────────
+        # Les arbres produisent des probas mal calibrées ; en scoring la proba EST le
+        # score, donc on calibre (isotonic si assez de données, sinon sigmoid/Platt).
+        # Le logit est déjà bien calibré par construction → pas de calibration.
+        # (le logit a déjà été assigné à `model` ci-dessus, sans calibration)
+        calibration_info = None
+        if model_type in ('random_forest', 'xgboost', 'lightgbm'):
+            calib_method = 'isotonic' if len(y_train) >= 1000 else 'sigmoid'
+            calib_cv     = max(2, min(3, cv_folds))
+            model = CalibratedClassifierCV(base_model, method=calib_method, cv=calib_cv)
+            calibration_info = {'method': calib_method, 'cv': calib_cv}
+
         cv = StratifiedKFold(n_splits=cv_folds, shuffle=True, random_state=42)
-        if resampling != 'none':
-            from imblearn.pipeline import Pipeline as ImbPipeline
-            cv_estimator = ImbPipeline([('sampler', _make_sampler()), ('model', model)])
-        else:
-            cv_estimator = model
-        y_prob_cv = cross_val_predict(cv_estimator, X_train, y_train, cv=cv,
+        y_prob_cv = cross_val_predict(model, X_train, y_train, cv=cv,
                                       method='predict_proba')[:, 1]
         auc_cv  = round(float(roc_auc_score(y_train, y_prob_cv)), 4)
         gini_cv = round(2 * auc_cv - 1, 4)
@@ -372,13 +555,7 @@ class TrainingService:
         # Seuil optimal calculé sur le train (CV) — jamais sur le test
         optimal_threshold = TrainingService._find_optimal_threshold(y_train, y_prob_cv, strategy='f1')
 
-        # Entraînement final — rééchantillonnage sur le train complet
-        if resampling != 'none':
-            X_train_fit, y_train_fit = _make_sampler().fit_resample(X_train, y_train)
-            resampling_info['n_after'] = int(len(y_train_fit))
-            model.fit(X_train_fit, y_train_fit)
-        else:
-            model.fit(X_train, y_train)
+        model.fit(X_train, y_train)
 
         # Évaluation sur le test set (données jamais vues)
         y_prob_test = model.predict_proba(X_test)[:, 1]
@@ -390,8 +567,8 @@ class TrainingService:
         prob_0 = y_prob_test[y_test == 0]
         prob_1 = y_prob_test[y_test == 1]
 
-        group_0 = TrainingService._safe_kde(prob_0, x)
-        group_1 = TrainingService._safe_kde(prob_1, x)
+        group_0 = safe_kde(prob_0, x)
+        group_1 = safe_kde(prob_1, x)
 
         # ----------------------------------------------------------
         # Courbe lift et gain
@@ -411,20 +588,11 @@ class TrainingService:
         ks_test   = TrainingService._ks(y_test, y_prob_test)
 
         fpr, tpr, _ = roc_curve(y_test, y_prob_test)
-        roc = TrainingService._roc_sample(fpr, tpr)
+        roc = roc_sample(fpr, tpr)
         cm  = confusion_matrix(y_test, y_pred_test).tolist()
 
-        # Importance des features
-        feat_names = list(X.columns)
-        if hasattr(model, 'coef_'):
-            raw_imp  = [float(abs(v)) for v in model.coef_[0]]
-            imp_type = 'Coefficient |β|'
-        elif hasattr(model, 'feature_importances_'):
-            raw_imp  = [float(v) for v in model.feature_importances_]
-            imp_type = 'Feature importance'
-        else:
-            raw_imp  = []
-            imp_type = 'N/A'
+        # Importance des features — gère aussi le wrapper de calibration
+        raw_imp, imp_type = TrainingService._model_importance(model)
 
         feature_importance = sorted(
             [{'feature': n, 'importance': round(v, 4)}
@@ -432,7 +600,7 @@ class TrainingService:
             key=lambda x: x['importance'], reverse=True
         )[:20]
 
-        return {
+        result = {
             'model_type':         model_type,
             # Métriques CV (train set)
             'auc':                auc_cv,
@@ -446,9 +614,12 @@ class TrainingService:
             'class_names':        class_names or ['0', '1'],
             'optimal_threshold':  round(float(optimal_threshold), 4),
             'tuning':             tuning_info,
+            'calibration':        calibration_info,
+            'early_stopping':     early_stopping_info,
             'dataset_diagnostic': {
                 'minority_ratio':     imbalance['minority_ratio'],
                 'is_imbalanced':      imbalance['is_imbalanced'],
+                'is_severe':          imbalance['is_severe'],
                 'warnings':           dataset_val['warnings'],
                 'cv_folds_used':      cv_folds,
                 'cv_folds_requested': cv_folds_requested,
@@ -457,11 +628,11 @@ class TrainingService:
             'feature_importance': feature_importance,
             'importance_type':    imp_type,
             'n_features':         X_train.shape[1],
-            'n_samples':          int(len(y_arr)),
+            'n_samples':          n_total,
             'n_train':            int(len(y_train)),
             'n_test':             int(len(y_test)),
             'cv_folds':           cv_folds_requested,
-            'resampling':         resampling_info,
+            'pca_auto':           pca_auto_report,
             'prob_distribution': {
                 'x': [round(float(v), 4) for v in x],
                 'group_0': [round(float(p), 4) for p in group_0],
@@ -472,3 +643,17 @@ class TrainingService:
                 'lift': [round(float(lift[i]),            4) for i in idx_lift],
             },
         }
+
+        if return_artifact:
+            # Artifact de déploiement : tout ce qu'il faut pour rejouer la chaîne
+            # encodage → post-transformeurs → modèle sur de nouvelles données brutes.
+            artifact = {
+                'model':             model,               # logit nu OU CalibratedClassifierCV
+                'post_transformers': post_transformers,   # imputeur / scaler / ACP (dans l'ordre)
+                'encoded_features':  encoded_features,     # ordre des colonnes encodées attendu
+                'threshold':         float(optimal_threshold),
+                'class_names':       class_names or ['0', '1'],
+            }
+            return result, artifact
+
+        return result
