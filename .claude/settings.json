@@ -12,7 +12,11 @@
       "Bash(node -e \"const p=require\\('./package.json'\\); console.log\\(JSON.stringify\\(p.scripts,null,2\\)\\)\")",
       "Bash(npx vite *)",
       "Bash(.venv/Scripts/python.exe -m py_compile services/training_service.py services/pipeline_service.py)",
-      "Bash(.venv/Scripts/python.exe -m py_compile services/deployment_service.py routes/deployment_routes.py routes/data_modelling_routes.py services/training_service.py services/pipeline_service.py app.py)"
+      "Bash(.venv/Scripts/python.exe -m py_compile services/deployment_service.py routes/deployment_routes.py routes/data_modelling_routes.py services/training_service.py services/pipeline_service.py app.py)",
+      "PowerShell(try { $w = New-Object -ComObject Word.Application -ErrorAction Stop; Write-Output \"Word COM OK\"; $w.Quit\\(\\) } catch { Write-Output \"Word COM not available\" })"
+    ],
+    "additionalDirectories": [
+      "C:\\Users\\lenovo\\Desktop\\scoring_module"
     ]
   }
 }

@@ -27,3 +27,11 @@ data_profiling_report.json
 # OS
 .DS_Store
 Thumbs.db
+
+guide_redaction_chapitre4.md
+guide_redaction_chapitre3.md
+diagrammes_uml_chapitre3.md
+brouillon_section_3.2_architecture.tex
+PROMPT_OPUS_PRESENTATION.md
+
+Sommaire_rapport_stage.docx

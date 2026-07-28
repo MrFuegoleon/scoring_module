@@ -88,6 +88,18 @@ def download_model(model_id):
     return send_file(path, as_attachment=True, download_name=f'{model_id}.joblib')
 
 
+# ── /deployment/results/<id>/download ─────────────────────────────────────────
+# Télécharge le dataset scoré complet (trié par score décroissant + déciles).
+@deployment_bp.route('/results/<result_id>/download', methods=['GET'])
+def download_result(result_id):
+    csv_str = SessionStore.cache_get(f'result_{result_id}')
+    if csv_str is None:
+        return jsonify({'error': 'Résultat introuvable ou expiré — relancez la prédiction'}), 404
+    buf = io.BytesIO(csv_str.encode('utf-8'))
+    buf.seek(0)
+    return send_file(buf, mimetype='text/csv', as_attachment=True, download_name='dataset_score.csv')
+
+
 # ── /deployment/predict ───────────────────────────────────────────────────────
 # Deux modes : record JSON (1 client) OU fichier CSV (lot).
 @deployment_bp.route('/predict', methods=['POST'])
@@ -134,16 +146,27 @@ def predict():
                 'version_warning': warning,
             }), 200
 
-        # batch : aperçu + stats
-        scores = [round(float(p), 4) for p in proba]
+        # batch : aperçu + stats. Dp = décile par rang sur l'ensemble scoré
+        # (top 10% des probas → décile 1, … dernier 10% → décile 10).
+        deciles = DS.assign_deciles_by_rank(proba)
+        scores  = [round(float(p), 4) for p in proba]
         results = []
         preview_df = df.head(200).copy()
         for i in range(len(preview_df)):
             results.append({
-                'score':    scores[i],
-                'decision': labels[i],
-                'positive': bool(pred[i]),
+                'score': scores[i],
+                'Dp':    int(deciles[i]),
             })
+
+        # Dataset complet scoré, trié par score décroissant — mis en cache pour téléchargement
+        import uuid
+        full = df.copy()
+        full['score'] = np.round(proba, 6)
+        full['Dp']    = deciles
+        full = full.sort_values('score', ascending=False)
+        download_id = uuid.uuid4().hex[:12]
+        SessionStore.cache_set(f'result_{download_id}', full.to_csv(index=False))
+
         return jsonify({
             'success':    True,
             'mode':       'batch',
@@ -156,6 +179,7 @@ def predict():
                 {**{c: _safe(preview_df.iloc[i][c]) for c in preview_df.columns}, **results[i]}
                 for i in range(len(preview_df))
             ],
+            'download_id':     download_id,
             'class_names':     bundle.get('class_names'),
             'version_warning': warning,
         }), 200

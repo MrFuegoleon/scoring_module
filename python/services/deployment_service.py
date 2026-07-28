@@ -172,6 +172,23 @@ def predict(bundle: dict, df_raw: pd.DataFrame):
     return proba, pred, labels
 
 
+def assign_deciles_by_rank(proba) -> np.ndarray:
+    """
+    Découpe les probabilités en déciles par rang DANS l'ensemble scoré.
+    Trie du plus grand au plus petit : le top 10 % des probas → décile 1,
+    les 10 % suivants → décile 2, …, le dernier 10 % → décile 10.
+    """
+    proba = np.asarray(proba, dtype=float)
+    n = len(proba)
+    if n == 0:
+        return np.array([], dtype=int)
+    order = proba.argsort()[::-1]          # indices, proba la plus haute en premier
+    ranks = np.empty(n, dtype=int)
+    ranks[order] = np.arange(n)            # 0 = proba la plus haute
+    deciles = (ranks * 10 // n) + 1        # 1..10
+    return np.clip(deciles, 1, 10)
+
+
 # ── Persistance (joblib + sidecar JSON pour le listing) ───────────────────────
 def _meta_summary(bundle: dict) -> dict:
     return {

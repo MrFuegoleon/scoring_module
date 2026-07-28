@@ -50,6 +50,7 @@ export default function Deploiement({ active, onNavigate }) {
     setLoading(true); setError(null)
     try {
       const r = await fetch('/api/deployment/models')
+      console.log('Réponse du serveur :', r)
       const d = await r.json()
       if (!r.ok || !d.success) throw new Error(d.error || 'Erreur de chargement')
       setModels(d.models || [])
@@ -242,6 +243,15 @@ export default function Deploiement({ active, onNavigate }) {
                           <div className="dep-stat"><span className="dep-stat-val">{(batch.rate * 100).toFixed(1)}%</span><span className="dep-stat-lbl">taux</span></div>
                           <div className="dep-stat"><span className="dep-stat-val">{batch.threshold}</span><span className="dep-stat-lbl">seuil</span></div>
                         </div>
+                        {batch.download_id && (
+                          <a
+                            className="dep-btn-primary dep-download-btn"
+                            href={`/api/deployment/results/${batch.download_id}/download`}
+                            download
+                          >
+                            ⬇ Télécharger le dataset scoré (trié par score décroissant + déciles)
+                          </a>
+                        )}
                         <div className="dep-table-scroll">
                           <table className="dep-table">
                             <thead>
@@ -249,7 +259,7 @@ export default function Deploiement({ active, onNavigate }) {
                                 <th>#</th>
                                 {batch.columns.map(c => <th key={c}>{c}</th>)}
                                 <th className="dep-th-score">score</th>
-                                <th className="dep-th-score">décision</th>
+                                <th className="dep-th-score">décile</th>
                               </tr>
                             </thead>
                             <tbody>
@@ -259,7 +269,7 @@ export default function Deploiement({ active, onNavigate }) {
                                   {batch.columns.map(c => <td key={c}>{row[c] == null ? '—' : String(row[c])}</td>)}
                                   <td className="dep-td-score">{(row.score * 100).toFixed(1)}%</td>
                                   <td>
-                                    <span className={`dep-pill ${row.positive ? 'pos' : 'neg'}`}>{row.decision}</span>
+                                    <span className={`dep-decile dec-${row.Dp}`} title={`Décile ${row.Dp} (1 = probas les plus élevées)`}>D{row.Dp}</span>
                                   </td>
                                 </tr>
                               ))}

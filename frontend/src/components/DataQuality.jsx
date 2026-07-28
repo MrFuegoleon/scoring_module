@@ -226,7 +226,7 @@ export default function DataQuality({ activeFile, setActiveFile, theme = 'light'
                       Parcourir les fichiers
                     </button>
                     <p style={{ fontSize: '0.63rem', color: 'var(--muted)', marginTop: '0.5rem' }}>
-                      CSV · XLSX · JSON · PARQUET
+                      CSV
                     </p>
                   </div>
                 </div>

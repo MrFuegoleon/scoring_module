@@ -92,6 +92,7 @@
   border: 1px solid var(--d-border); border-radius: var(--d-radius);
   background: var(--d-surface); box-shadow: var(--d-shadow-sm);
   padding: 1.35rem 1.5rem; min-height: 240px;
+  min-width: 0;   /* autorise le scroll horizontal interne (sinon la grille s'élargit) */
 }
 .dep-panel-empty { color: var(--d-muted); font-size: 0.9rem; text-align: center; padding: 3rem; }
 .dep-panel-head { display: flex; align-items: baseline; justify-content: space-between; gap: 0.75rem; margin-bottom: 1rem; }
@@ -150,7 +151,7 @@
 .dep-stat-lbl { font-size: 0.66rem; color: var(--d-muted); text-transform: uppercase; letter-spacing: .05em; font-weight: 600; }
 
 .dep-table-scroll { overflow: auto; max-height: 380px; border: 1px solid var(--d-border); border-radius: var(--d-radius-sm); }
-.dep-table { width: 100%; border-collapse: collapse; font-size: 0.78rem; }
+.dep-table { width: max-content; min-width: 100%; border-collapse: collapse; font-size: 0.78rem; }
 .dep-table thead { position: sticky; top: 0; z-index: 1; }
 .dep-table th { background: var(--d-surface-2); padding: 0.5rem 0.7rem; text-align: left; white-space: nowrap; border-bottom: 1px solid var(--d-border-2); font-weight: 700; color: var(--d-soft); }
 .dep-table td { padding: 0.42rem 0.7rem; border-bottom: 1px solid var(--d-border); white-space: nowrap; color: var(--d-soft); }
@@ -162,4 +163,18 @@
 .dep-pill { font-size: 0.7rem; font-weight: 700; padding: 0.12rem 0.5rem; border-radius: 999px; }
 .dep-pill.pos { background: #fef2f2; color: #dc2626; }
 .dep-pill.neg { background: #ecfdf5; color: #047857; }
+
+/* Décile : D1 (probas les + élevées) rouge → D10 vert */
+.dep-decile { display: inline-block; min-width: 30px; text-align: center; font-size: 0.72rem; font-weight: 800; padding: 0.12rem 0.45rem; border-radius: 999px; color: #fff; }
+.dec-1  { background: #b91c1c; }
+.dec-2  { background: #dc2626; }
+.dec-3  { background: #f97316; }
+.dec-4  { background: #f59e0b; }
+.dec-5  { background: #eab308; color: #1f2937; }
+.dec-6  { background: #84cc16; color: #1f2937; }
+.dec-7  { background: #22c55e; }
+.dec-8  { background: #16a34a; }
+.dec-9  { background: #15803d; }
+.dec-10 { background: #166534; }
 .dep-table-note { font-size: 0.72rem; color: var(--d-muted); margin-top: 0.5rem; }
+.dep-download-btn { display: inline-block; margin: 0 0 1.1rem; font-size: 0.82rem; text-decoration: none; }
