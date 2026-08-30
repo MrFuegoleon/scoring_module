@@ -93,7 +93,10 @@ def build_raw_schema(df: pd.DataFrame, target_col: str) -> list:
 def _transform_logit(df_raw: pd.DataFrame, encoders: dict) -> pd.DataFrame:
     woe_report = encoders['woe_report']
     target_col = encoders.get('target_col')
-    df, _, _ = PipelineService._preprocess(df_raw, target_col)
+    # Rejoue le traitement des NaN de l'entraînement. Les bundles antérieurs au bin
+    # '__missing__' n'ont pas ce drapeau → -999, comme au moment de leur entraînement.
+    keep_na = encoders.get('numeric_na') == 'missing_bin'
+    df, _, _ = PipelineService._preprocess(df_raw, target_col, keep_na=keep_na)
     out = pd.DataFrame(index=df.index)
     for col, info in woe_report.items():
         bin_to_woe  = {b['bin']: b['woe'] for b in info['bins']}
@@ -156,7 +159,11 @@ def coerce_to_schema(df: pd.DataFrame, raw_schema: list) -> pd.DataFrame:
         if f['kind'] == 'numeric':
             df[col] = pd.to_numeric(df[col], errors='coerce')
         else:
-            df[col] = df[col].astype(str)
+            # astype(str) transformerait les NaN en chaîne 'nan' — une modalité
+            # inconnue du modèle. On les préserve pour que _preprocess les route
+            # vers 'unknown' (arbres) ou '__missing__' (logit), comme à l'entraînement.
+            na      = df[col].isna()
+            df[col] = df[col].astype(str).where(~na, np.nan)
     return df
 
 
@@ -177,6 +184,9 @@ def assign_deciles_by_rank(proba) -> np.ndarray:
     Découpe les probabilités en déciles par rang DANS l'ensemble scoré.
     Trie du plus grand au plus petit : le top 10 % des probas → décile 1,
     les 10 % suivants → décile 2, …, le dernier 10 % → décile 10.
+
+    La proba est celle de l'ÉVÉNEMENT (bundle['positive_class']) : le décile 1
+    regroupe donc les dossiers les plus exposés à cet événement.
     """
     proba = np.asarray(proba, dtype=float)
     n = len(proba)
@@ -195,7 +205,8 @@ def _meta_summary(bundle: dict) -> dict:
         'model_id':    bundle['model_id'],
         'model_type':  bundle['model_type'],
         'pipeline':    bundle['pipeline'],
-        'target_col':  bundle.get('target_col'),
+        'target_col':     bundle.get('target_col'),
+        'positive_class': bundle.get('positive_class'),
         'class_names': bundle.get('class_names'),
         'threshold':   bundle.get('threshold'),
         'raw_schema':  bundle.get('raw_schema', []),

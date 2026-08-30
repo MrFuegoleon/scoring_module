@@ -81,16 +81,20 @@ class TrainingService:
 
     # ── Pipeline pré-encodé (datamarts pipeline_service) ─────────────────────
     @staticmethod
-    def prepare_preencoded_features(df: pd.DataFrame, target_col: str):
+    def prepare_preencoded_features(df: pd.DataFrame, target_col: str,
+                                    positive_class=None):
         """
         Extraction X/y depuis un datamart déjà encodé (logit WOE ou tree OHE+TE).
         Pas de transformation supplémentaire — juste conversion des types résiduels.
+        positive_class : modalité codée 1 (l'événement modélisé).
         """
+        from services.modelling_service import ModellingService
+
         feature_cols = [c for c in df.columns if c != target_col]
 
-        target_series = df[target_col].dropna()
-        vals = sorted(target_series.unique(), key=str)
-        target_map = {vals[0]: 0, vals[1]: 1}
+        target_map, class_names = ModellingService.build_target_map(
+            df[target_col], positive_class
+        )
         y = df[target_col].map(target_map).dropna().astype(int)
 
         X = df[feature_cols].loc[y.index].copy()
@@ -107,7 +111,6 @@ class TrainingService:
             X.loc[mask, col] = le.fit_transform(X.loc[mask, col].astype(str))
             X[col] = pd.to_numeric(X[col], errors='coerce')
 
-        class_names = [str(vals[0]), str(vals[1])]
         return X, y, list(X.columns), class_names
 
     # ── Métriques ─────────────────────────────────────────────────────────────
@@ -133,6 +136,7 @@ class TrainingService:
         calibrated = getattr(model, 'calibrated_classifiers_', None)
         if calibrated:
             imps = []
+            label = 'Feature importance'
             for cc in calibrated:
                 est = getattr(cc, 'estimator', None) or getattr(cc, 'base_estimator', None)
                 if est is None:
@@ -140,9 +144,11 @@ class TrainingService:
                 if hasattr(est, 'feature_importances_'):
                     imps.append(np.asarray(est.feature_importances_, dtype=float))
                 elif hasattr(est, 'coef_'):
+                    # Logit calibré : ce sont bien des coefficients, pas des gains d'arbre
                     imps.append(np.abs(np.asarray(est.coef_[0], dtype=float)))
+                    label = 'Coefficient |β|'
             if imps:
-                return [float(v) for v in np.mean(imps, axis=0)], 'Feature importance'
+                return [float(v) for v in np.mean(imps, axis=0)], label
 
         return [], 'N/A'
 
@@ -402,7 +408,9 @@ class TrainingService:
             n_total = int(len(y_arr))
 
         # Imputation ajustée sur le train uniquement — seulement si NaN réels présents.
-        # Les datamarts ont déjà fillna(-999) dans _preprocess : SimpleImputer serait un no-op coûteux.
+        # Les datamarts n'en ont pas : le WOE mappe tout bin (y compris '__missing__')
+        # sur une valeur, et le pipeline tree impute en -999. SimpleImputer serait
+        # un no-op coûteux.
         if np.isnan(X_train).any() or np.isnan(X_test).any():
             imp     = SimpleImputer(strategy='median')
             X_train = imp.fit_transform(X_train)
@@ -502,9 +510,12 @@ class TrainingService:
             # quand il sélectionne L1 (best_params contient alors 'solver').
             p.setdefault('solver', 'lbfgs')
             p.setdefault('penalty', None)
-            if imbalance['is_imbalanced']:
-                p.setdefault('class_weight', 'balanced')
-            model = LogisticRegression(random_state=42, **p)
+            # Pas de class_weight='balanced' automatique : rééquilibrer déplace
+            # l'intercept, la proba cesse d'être une PD lisible et surestime le risque.
+            # Le déséquilibre est déjà pris en charge par le seuil optimal calculé
+            # plus bas — le rééquilibrage ferait doublon. Si le tuning retient malgré
+            # tout 'balanced', le modèle est calibré comme les arbres (cf. plus bas).
+            base_model = LogisticRegression(random_state=42, **p)
         elif model_type == 'random_forest':
             params = dict(best_params)
             params.setdefault('n_estimators', 300)   # fixé haut (hors grille)
@@ -533,17 +544,30 @@ class TrainingService:
         else:
             raise ValueError(f"Modèle inconnu : {model_type}")
 
-        # ── Calibration des probabilités — modèles d'arbres uniquement ───────────
-        # Les arbres produisent des probas mal calibrées ; en scoring la proba EST le
-        # score, donc on calibre (isotonic si assez de données, sinon sigmoid/Platt).
-        # Le logit est déjà bien calibré par construction → pas de calibration.
-        # (le logit a déjà été assigné à `model` ci-dessus, sans calibration)
+        # ── Calibration des probabilités ─────────────────────────────────────────
+        # En scoring la proba EST le score : elle doit rester lisible comme une PD.
+        # Deux sources de distorsion, traitées par la même règle :
+        #   1. les arbres produisent des probas mal calibrées par construction ;
+        #   2. tout rééquilibrage de classes (class_weight) déplace l'intercept —
+        #      y compris sur un logit, que le tuning peut choisir de pondérer.
+        # Un logit non pondéré est calibré par construction → laissé intact.
+        # La calibration étant monotone, elle ne dégrade ni l'AUC ni le Gini.
+        reweighted = best_params.get('class_weight') is not None
+        needs_calibration = model_type in ('random_forest', 'xgboost', 'lightgbm') or reweighted
+
         calibration_info = None
-        if model_type in ('random_forest', 'xgboost', 'lightgbm'):
+        if needs_calibration:
             calib_method = 'isotonic' if len(y_train) >= 1000 else 'sigmoid'
             calib_cv     = max(2, min(3, cv_folds))
             model = CalibratedClassifierCV(base_model, method=calib_method, cv=calib_cv)
-            calibration_info = {'method': calib_method, 'cv': calib_cv}
+            calibration_info = {
+                'method': calib_method,
+                'cv':     calib_cv,
+                'reason': 'rééquilibrage des classes' if (reweighted and model_type == 'logit')
+                          else 'modèle à base d\'arbres',
+            }
+        else:
+            model = base_model
 
         cv = StratifiedKFold(n_splits=cv_folds, shuffle=True, random_state=42)
         y_prob_cv = cross_val_predict(model, X_train, y_train, cv=cv,
@@ -587,6 +611,21 @@ class TrainingService:
         gini_test = round(2 * auc_test - 1, 4)
         ks_test   = TrainingService._ks(y_test, y_prob_test)
 
+        # ── Qualité de calibration (test) ────────────────────────────────────
+        # L'AUC ne mesure que le classement ; ces indicateurs disent si la proba
+        # est lisible telle quelle comme probabilité d'événement.
+        #   brier  : erreur quadratique moyenne sur la proba (plus bas = mieux)
+        #   gap    : proba moyenne prédite − taux observé. Un modèle rééquilibré
+        #            non calibré affiche ici un écart franchement positif.
+        mean_pred     = float(np.mean(y_prob_test))
+        observed_rate = float(np.mean(y_test))
+        calibration_quality = {
+            'brier':          round(float(np.mean((y_prob_test - y_test) ** 2)), 4),
+            'mean_predicted': round(mean_pred, 4),
+            'observed_rate':  round(observed_rate, 4),
+            'gap':            round(mean_pred - observed_rate, 4),
+        }
+
         fpr, tpr, _ = roc_curve(y_test, y_prob_test)
         roc = roc_sample(fpr, tpr)
         cm  = confusion_matrix(y_test, y_pred_test).tolist()
@@ -615,6 +654,7 @@ class TrainingService:
             'optimal_threshold':  round(float(optimal_threshold), 4),
             'tuning':             tuning_info,
             'calibration':        calibration_info,
+            'calibration_quality': calibration_quality,
             'early_stopping':     early_stopping_info,
             'dataset_diagnostic': {
                 'minority_ratio':     imbalance['minority_ratio'],

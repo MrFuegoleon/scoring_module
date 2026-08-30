@@ -114,7 +114,7 @@ def pipeline_init():
 # Applique les 3 transformations dans l'ordre :
 #   1. Types confirmés par l'utilisateur
 #   2. Suppression des doublons
-#   3. Winsorisation des outliers (IQR)
+#   3. Traitement des outliers (IQR) selon la stratégie choisie
 # Met à jour la session pour que l'étape suivante (imputation) parte
 # du dataframe déjà nettoyé.
 @data_cleaning_bp.route("/pipeline/confirm", methods=["POST"])
@@ -136,9 +136,9 @@ def pipeline_confirm():
         except json.JSONDecodeError:
             return jsonify({"error": "confirmed_types doit être du JSON valide"}), 400
 
-        # Stratégie outliers choisie par l'utilisateur ('drop' | 'winsorise')
+        # Stratégie outliers choisie par l'utilisateur ('drop' | 'winsorise' | 'keep')
         outlier_strategy = request.form.get('outlier_strategy', 'drop')
-        if outlier_strategy not in ('drop', 'winsorise'):
+        if outlier_strategy not in ('drop', 'winsorise', 'keep'):
             outlier_strategy = 'drop'
 
         df = SessionStore.get(session_id)
@@ -267,11 +267,16 @@ def pipeline_build():
     try:
         session_id    = request.form.get('session_id')
         target_col    = request.form.get('target_col')
-        n_bins        = int(request.form.get('n_bins', 10))
-        cardinality   = int(request.form.get('cardinality_threshold', 10))
-        smoothing     = float(request.form.get('smoothing', 0.2))
+        # Ces réglages sont rejoués tels quels à l'entraînement (cf. /modelling/train) :
+        # on les borne ici, à l'unique endroit où ils entrent dans le système.
+        n_bins        = max(2, min(50,   int(request.form.get('n_bins', 10))))
+        cardinality   = max(2, min(1000, int(request.form.get('cardinality_threshold', 10))))
+        smoothing     = max(0.0, float(request.form.get('smoothing', 0.2)))
         excl_raw      = request.form.get('excluded_cols')
         excluded_cols = json.loads(excl_raw) if excl_raw else []
+        # Modalité de la cible traitée comme l'événement (défaut, fraude…).
+        # Absente → repli alphabétique dans build_target_map.
+        positive_class = request.form.get('positive_class') or None
 
         if not session_id or not target_col:
             return jsonify({'error': 'session_id et target_col requis'}), 400
@@ -289,18 +294,35 @@ def pipeline_build():
             # Mise à jour du df brut en session pour que le chemin split utilise le même périmètre
             SessionStore.set(session_id, df)
 
-        df_logit, logit_summary = PipelineService.build_logit_pipeline(df, target_col, n_bins)
-        df_tree,  tree_summary  = PipelineService.build_tree_pipeline(df, target_col, cardinality, smoothing)
+        df_logit, logit_summary = PipelineService.build_logit_pipeline(
+            df, target_col, n_bins, positive_class=positive_class)
+        df_tree,  tree_summary  = PipelineService.build_tree_pipeline(
+            df, target_col, cardinality, smoothing, positive_class=positive_class)
+
+        _, class_names = ModellingService.build_target_map(df[target_col], positive_class)
 
         SessionStore.set(f'{session_id}_logit', df_logit)
         SessionStore.set(f'{session_id}_tree',  df_tree)
-        SessionStore.set_meta(session_id, {'target_col': target_col})
+        # Tout le paramétrage choisi ici doit être rejoué à l'identique à l'entraînement :
+        # le chemin sans leakage ré-encode depuis les données brutes et repartirait sinon
+        # sur les valeurs par défaut — le datamart prévisualisé ne correspondrait plus au
+        # modèle entraîné. C'est aussi le seul mécanisme d'adaptation au métier.
+        SessionStore.set_meta(session_id, {
+            'target_col':            target_col,
+            'positive_class':        class_names[1],
+            'class_names':           class_names,
+            'n_bins':                n_bins,
+            'cardinality_threshold': cardinality,
+            'smoothing':             smoothing,
+        })
         # Invalide les splits encodés en cache (le périmètre des features a pu changer)
         SessionStore.cache_clear_prefix(session_id)
 
         return jsonify({
-            'success':       True,
-            'target_col':    target_col,
+            'success':        True,
+            'target_col':     target_col,
+            'positive_class': class_names[1],
+            'class_names':    class_names,
             'logit_summary': logit_summary,
             'tree_summary':  tree_summary,
             'logit_preview': _safe_records(df_logit, 8),

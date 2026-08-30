@@ -111,6 +111,19 @@ def train_model():
         if not target_col:
             return jsonify({"error": "Variable cible introuvable dans le datamart"}), 400
 
+        # Modalité codée 1 — choisie à la construction des pipelines.
+        # None pour les sessions antérieures → repli alphabétique historique.
+        positive_class = meta.get('positive_class')
+
+        # Réglages figés à la construction des datamarts : le ré-encodage train/test
+        # doit les rejouer, sans quoi le modèle serait entraîné sur un encodage
+        # différent de celui que l'utilisateur a paramétré et prévisualisé.
+        # Sessions antérieures (meta sans ces clés) → anciennes valeurs par défaut.
+        n_bins       = int(meta.get('n_bins') or 10)
+        cardinality  = int(meta.get('cardinality_threshold') or 10)
+        smoothing    = meta.get('smoothing')
+        smoothing    = 0.2 if smoothing is None else float(smoothing)
+
         # ── Chemin sans leakage : split sur données brutes avant encodage ───────
         # Le split encodé est mis en cache : recliquer "Relancer" ne recalcule plus
         # WOE/OHE+TE (invalidé au rebuild des pipelines via cache_clear_prefix).
@@ -129,10 +142,11 @@ def train_model():
             if df_raw is not None and target_col in df_raw.columns:
                 from services.pipeline_service import PipelineService
 
-                raw_target = df_raw[target_col].dropna()
-                raw_vals   = sorted(raw_target.unique(), key=str)
+                from services.modelling_service import ModellingService
+
+                raw_vals = sorted(df_raw[target_col].dropna().unique(), key=str)
                 if len(raw_vals) == 2:   # cible binaire requise pour le chemin sans leakage
-                    raw_map = {raw_vals[0]: 0, raw_vals[1]: 1}
+                    raw_map, _ = ModellingService.build_target_map(df_raw[target_col], positive_class)
                     y_strat = df_raw[target_col].map(raw_map).dropna().astype(int)
                     df_raw  = df_raw.loc[y_strat.index]
 
@@ -144,16 +158,23 @@ def train_model():
                         from services.deployment_service import build_raw_schema
                         if pipeline == 'logit':
                             df_tr_enc, df_te_enc, encoders = PipelineService.build_logit_pipeline_split(
-                                df_train_raw, df_test_raw, target_col
+                                df_train_raw, df_test_raw, target_col,
+                                n_bins=n_bins,
+                                positive_class=positive_class
                             )
                         else:
                             df_tr_enc, df_te_enc, encoders = PipelineService.build_tree_pipeline_split(
-                                df_train_raw, df_test_raw, target_col
+                                df_train_raw, df_test_raw, target_col,
+                                cardinality_threshold=cardinality,
+                                smoothing=smoothing,
+                                positive_class=positive_class
                             )
 
                         raw_schema = build_raw_schema(df_raw, target_col)
-                        X_tr, y_tr, feature_names, class_names = TrainingService.prepare_preencoded_features(df_tr_enc, target_col)
-                        X_te, y_te, _, _                       = TrainingService.prepare_preencoded_features(df_te_enc, target_col)
+                        X_tr, y_tr, feature_names, class_names = TrainingService.prepare_preencoded_features(
+                            df_tr_enc, target_col, positive_class=positive_class)
+                        X_te, y_te, _, _                       = TrainingService.prepare_preencoded_features(
+                            df_te_enc, target_col, positive_class=positive_class)
                         SessionStore.cache_set(cache_key, (X_tr, y_tr, X_te, y_te, feature_names, class_names, encoders, raw_schema))
                         used_split_path = True
                     except Exception:
@@ -169,17 +190,19 @@ def train_model():
             try:
                 from services import deployment_service as DS
                 artifact.update({
-                    'model_type': model_type,
-                    'pipeline':   pipeline,
-                    'target_col': target_col,
-                    'encoders':   encoders,
-                    'raw_schema': raw_schema,
+                    'model_type':     model_type,
+                    'pipeline':       pipeline,
+                    'target_col':     target_col,
+                    'positive_class': (class_names or ['0', '1'])[1],
+                    'encoders':       encoders,
+                    'raw_schema':     raw_schema,
                     'meta': {
                         'auc_test':    results.get('auc_test'),
                         'gini_test':   results.get('gini_test'),
                         'ks_test':     results.get('ks_test'),
                         'n_features':  results.get('n_features'),
                         'calibration': results.get('calibration'),
+                        'calibration_quality': results.get('calibration_quality'),
                         'versions':    DS.current_versions(),
                     },
                 })
@@ -191,19 +214,22 @@ def train_model():
             df = SessionStore.get(sid)
             if target_col not in df.columns:
                 return jsonify({"error": "Variable cible introuvable dans le datamart"}), 400
-            X, y, feature_names, class_names = TrainingService.prepare_preencoded_features(df, target_col)
+            X, y, feature_names, class_names = TrainingService.prepare_preencoded_features(
+                df, target_col, positive_class=positive_class)
             results = TrainingService.train_and_evaluate(
                 X, y, model_type,
                 class_names=class_names, use_tuning=use_tuning, n_iter=n_iter,
             )
 
         response = {
-            'success':       True,
-            'pipeline':      pipeline,
-            'model_type':    model_type,
-            'target_col':    target_col,
-            'results':       results,
-            'feature_names': feature_names,
+            'success':        True,
+            'pipeline':       pipeline,
+            'model_type':     model_type,
+            'target_col':     target_col,
+            'positive_class': (class_names or ['0', '1'])[1],
+            'class_names':    class_names,
+            'results':        results,
+            'feature_names':  feature_names,
         }
         return jsonify(response), 200
 

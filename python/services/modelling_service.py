@@ -23,27 +23,66 @@ class ModellingService:
     # 1. DÉTECTION DE LA VARIABLE CIBLE
     # ─────────────────────────────────────────────────────────────────────────
     @staticmethod
+    def build_target_map(series: pd.Series, positive_class=None) -> tuple[dict, list]:
+        """
+        Construit le mapping {modalité: 0/1} de la variable cible.
+
+        positive_class : modalité représentant l'ÉVÉNEMENT modélisé (défaut, fraude…).
+                         Comparaison sur str(), la valeur transitant par le formulaire.
+        Si None ou introuvable → repli sur la 2ᵉ modalité par ordre alphabétique
+        (convention historique, conservée pour les sessions et bundles antérieurs).
+
+        Ce choix n'a aucun effet sur l'AUC, qui est symétrique, mais il détermine
+        le signe du WOE, l'orientation de la matrice de confusion, la courbe de
+        lift, les déciles et le libellé de décision renvoyé au déploiement.
+
+        Retourne (target_map, class_names) avec class_names = [négatif, positif].
+        """
+        vals = sorted(pd.Series(series).dropna().unique(), key=str)
+        if len(vals) != 2:
+            raise ValueError(f"La colonne cible doit être binaire ({len(vals)} valeurs trouvées).")
+
+        idx = 1
+        if positive_class is not None:
+            for i, v in enumerate(vals):
+                if str(v) == str(positive_class):
+                    idx = i
+                    break
+
+        pos, neg = vals[idx], vals[1 - idx]
+        return {neg: 0, pos: 1}, [str(neg), str(pos)]
+
+    @staticmethod
     def detect_target_candidates(df: pd.DataFrame) -> list:
         """
         Propose les colonnes binaires comme candidates pour la variable cible.
         Retourne la liste triée par taux d'événements le plus proche de 50%.
         """
         candidates = []
+        total = len(df)
         for col in df.columns:
             if df[col].nunique() != 2:
                 continue
-            vals = sorted(df[col].dropna().unique(), key=str)
-            event_val  = vals[1]
+            vals   = sorted(df[col].dropna().unique(), key=str)
+            counts = {str(v): int((df[col] == v).sum()) for v in vals}
+
+            # En scoring, l'événement modélisé (défaut, fraude, impayé) est presque
+            # toujours la modalité rare → proposée par défaut. L'utilisateur tranche :
+            # un ordre alphabétique ferait de « good » l'événement sur une cible bad/good.
+            suggested  = min(vals, key=lambda v: counts[str(v)])
             n_missing  = int(df[col].isna().sum())
             # Taux calculé sur la population totale (manquants exclus du numérateur)
-            event_rate = round(float((df[col] == event_val).sum() / len(df)), 4)
+            event_rate = round(counts[str(suggested)] / total, 4) if total else 0
+
             candidates.append({
-                "column":     col,
-                "values":     [str(v) for v in vals],
-                "event_val":  str(event_val),
-                "event_rate": event_rate,
-                "n_missing":  n_missing,
-                "balance":    round(abs(0.5 - event_rate), 4),
+                "column":             col,
+                "values":             [str(v) for v in vals],
+                "value_counts":       counts,
+                "suggested_positive": str(suggested),
+                "event_val":          str(suggested),
+                "event_rate":         event_rate,
+                "n_missing":          n_missing,
+                "balance":            round(abs(0.5 - event_rate), 4),
             })
         # Meilleures candidates : taux le plus équilibré en premier
         candidates.sort(key=lambda x: x["balance"])
@@ -142,7 +181,17 @@ class ModellingService:
 
     @staticmethod
     def _bin_categorical(series: pd.Series) -> pd.Series:
-        return series.apply(lambda x: str(x) if pd.notna(x) else '__missing__')
+        """
+        Étiquette discrète pour le WOE ; les NaN forment le bin '__missing__'.
+
+        Le astype(object) est indispensable : sur un dtype 'category',
+        Series.apply/map n'opère que sur les catégories et renvoie une catégorie
+        où les NaN restent NaN. Le groupby(observed=True) les écarterait alors
+        silencieusement — pas de bin '__missing__' et lignes perdues du calcul.
+        """
+        return series.astype(object).map(
+            lambda x: str(x) if pd.notna(x) else '__missing__'
+        )
 
     # ─────────────────────────────────────────────────────────────────────────
     # 3. CALCUL WOE / IV PAR COLONNE
@@ -192,10 +241,13 @@ class ModellingService:
     # ─────────────────────────────────────────────────────────────────────────
     @staticmethod
     def compute_woe_iv(df: pd.DataFrame, target_col: str,
-                       feature_cols: list = None, n_bins: int = 10) -> dict:
+                       feature_cols: list = None, n_bins: int = 10,
+                       positive_class=None) -> dict:
         """
         Calcule le WOE et l'IV pour chaque variable feature.
         Le bin '__missing__' regroupe les valeurs manquantes — pas d'imputation.
+        positive_class : modalité de la cible traitée comme l'événement (cf.
+        build_target_map) — elle fixe le signe du WOE.
         Résultat trié par IV décroissant.
         """
         total = len(df)
@@ -216,13 +268,8 @@ class ModellingService:
 
         feature_cols = [c for c in feature_cols if not _should_skip(c)]
 
-        # Encodage cible → 0 / 1
-        target_series = df[target_col].dropna()
-        vals = sorted(target_series.unique(), key=str)
-        if len(vals) != 2:
-            raise ValueError(f"La colonne cible doit être binaire ({len(vals)} valeurs trouvées).")
-
-        target_map = {vals[0]: 0, vals[1]: 1}
+        # Encodage cible → 0 / 1 (l'événement vaut 1)
+        target_map, _ = ModellingService.build_target_map(df[target_col], positive_class)
         df_work = df.copy()
         df_work['__target__'] = df_work[target_col].map(target_map).astype('Int64')
         df_work = df_work.dropna(subset=['__target__'])

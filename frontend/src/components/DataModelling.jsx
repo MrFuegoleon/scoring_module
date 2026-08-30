@@ -401,7 +401,8 @@ function ModelResultCard({ modelType, result, error, running }) {
                   )}
                   {result.results.calibration && (
                     <span className="dm-meta-chip dm-meta-chip--ok"
-                          title={`Probabilités calibrées · ${result.results.calibration.cv}-fold`}>
+                          title={`Probabilités calibrées · ${result.results.calibration.cv}-fold${
+                            result.results.calibration.reason ? ` · motif : ${result.results.calibration.reason}` : ''}`}>
                       🎯 Calibré · <strong>{result.results.calibration.method === 'isotonic' ? 'isotonic' : 'sigmoid'}</strong>
                     </span>
                   )}

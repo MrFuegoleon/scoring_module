@@ -8,31 +8,18 @@ class PipelineService:
     # ── Pipeline 1 : Régression Logistique (WOE) ──────────────────────────────
     @staticmethod
     def build_logit_pipeline(df: pd.DataFrame, target_col: str,
-                              n_bins: int = 10) -> tuple[pd.DataFrame, dict]:
+                              n_bins: int = 10,
+                              positive_class=None) -> tuple[pd.DataFrame, dict]:
         """
-        Numeric  : inf/-inf → NaN → -999, puis WOE
-        Categoric: NaN → 'unknown', puis WOE
+        inf/-inf → NaN, puis WOE. Les NaN ne sont PAS imputés : le WOE les
+        regroupe dans son bin '__missing__', qui porte son propre poids de risque.
         """
-        df = df.copy()
-        num_cols = [c for c in df.columns
-                    if c != target_col and pd.api.types.is_numeric_dtype(df[c])]
-        cat_cols = [c for c in df.columns
-                    if c != target_col and not pd.api.types.is_numeric_dtype(df[c])]
-
-        # 1. inf/-inf → NaN
-        if num_cols:
-            df[num_cols] = df[num_cols].replace([np.inf, -np.inf], np.nan)
-
-        # 2. Numériques : NaN → -999
-        if num_cols:
-            df[num_cols] = df[num_cols].fillna(-999)
-
-        # 3. Catégoriques : NaN → 'unknown'
-        for col in cat_cols:
-            df[col] = df[col].astype(object).fillna('unknown').infer_objects(copy=False).astype(str)
+        # 1-3. inf/-inf → NaN, NaN conservés pour le bin '__missing__'
+        df, num_cols, cat_cols = PipelineService._preprocess(df, target_col, keep_na=True)
 
         # 4. WOE sur toutes les features
-        woe_report = ModellingService.compute_woe_iv(df, target_col, n_bins=n_bins)
+        woe_report = ModellingService.compute_woe_iv(df, target_col, n_bins=n_bins,
+                                                     positive_class=positive_class)
         df_out = ModellingService.apply_woe_transform(df, target_col, woe_report, n_bins=n_bins)
 
         iv_summary = {'Inutile': 0, 'Faible': 0, 'Moyen': 0, 'Fort': 0, 'Suspect': 0}
@@ -55,7 +42,8 @@ class PipelineService:
     @staticmethod
     def build_tree_pipeline(df: pd.DataFrame, target_col: str,
                              cardinality_threshold: int = 10,
-                             smoothing: float = 0.2) -> tuple[pd.DataFrame, dict]:
+                             smoothing: float = 0.2,
+                             positive_class=None) -> tuple[pd.DataFrame, dict]:
         """
         Numeric      : inf/-inf → NaN → -999
         Cat. faible  : OHE
@@ -79,10 +67,8 @@ class PipelineService:
         for col in cat_cols:
             df[col] = df[col].astype(object).fillna('unknown').infer_objects(copy=False).astype(str)
 
-        # 4. Calcul de y binaire pour Target Encoding
-        target_series = df[target_col].dropna()
-        vals = sorted(target_series.unique(), key=str)
-        target_map = {vals[0]: 0, vals[1]: 1}
+        # 4. Calcul de y binaire pour Target Encoding (l'événement vaut 1)
+        target_map, _ = ModellingService.build_target_map(df[target_col], positive_class)
         y = df[target_col].map(target_map).fillna(0).astype(float)
         global_mean = float(y.mean())
         N = len(df)
@@ -135,30 +121,56 @@ class PipelineService:
 
     # ── Helpers partagés ──────────────────────────────────────────────────────
     @staticmethod
-    def _preprocess(df: pd.DataFrame, target_col: str) -> tuple[pd.DataFrame, list, list]:
-        """inf/nan handling commun aux deux pipelines."""
+    def _preprocess(df: pd.DataFrame, target_col: str,
+                     keep_na: bool = False) -> tuple[pd.DataFrame, list, list]:
+        """
+        inf/nan handling commun aux deux pipelines.
+
+        keep_na=False (arbres) : NaN numériques → -999, NaN catégoriels → 'unknown'.
+                                 Les arbres savent isoler une valeur sentinelle par un split.
+        keep_na=True  (logit)  : NaN conservés — le WOE les isole dans son bin
+                                 '__missing__'. Les imputer d'abord fusionnerait le
+                                 signal « valeur manquante » avec celui du bin le plus
+                                 bas, et un -999 déformerait en plus les quantiles.
+        """
         df = df.copy()
         num_cols = [c for c in df.columns if c != target_col and pd.api.types.is_numeric_dtype(df[c])]
         cat_cols = [c for c in df.columns if c != target_col and not pd.api.types.is_numeric_dtype(df[c])]
+
         if num_cols:
-            df[num_cols] = df[num_cols].replace([np.inf, -np.inf], np.nan).fillna(-999)
-        for col in cat_cols:
-            df[col] = df[col].astype(object).fillna('unknown').infer_objects(copy=False).astype(str)
+            df[num_cols] = df[num_cols].replace([np.inf, -np.inf], np.nan)
+            if not keep_na:
+                df[num_cols] = df[num_cols].fillna(-999)
+
+        # keep_na : on laisse les catégorielles intactes — _bin_categorical convertit
+        # en str et route les NaN vers '__missing__'. Un astype(str) ici transformerait
+        # les NaN en chaîne 'nan' et court-circuiterait ce bin.
+        if not keep_na:
+            for col in cat_cols:
+                df[col] = df[col].astype(object).fillna('unknown').infer_objects(copy=False).astype(str)
+
         return df, num_cols, cat_cols
 
     # ── Pipeline logit sans leakage (fit sur train, transform test) ───────────
     @staticmethod
     def build_logit_pipeline_split(df_train: pd.DataFrame, df_test: pd.DataFrame,
-                                    target_col: str, n_bins: int = 10):
+                                    target_col: str, n_bins: int = 10,
+                                    positive_class=None):
         """WOE calculé sur df_train uniquement — appliqué aux deux. Pas de leakage."""
-        df_train, _, _ = PipelineService._preprocess(df_train, target_col)
-        df_test,  _, _ = PipelineService._preprocess(df_test,  target_col)
+        df_train, _, _ = PipelineService._preprocess(df_train, target_col, keep_na=True)
+        df_test,  _, _ = PipelineService._preprocess(df_test,  target_col, keep_na=True)
 
-        woe_report   = ModellingService.compute_woe_iv(df_train, target_col, n_bins=n_bins)
+        _, class_names = ModellingService.build_target_map(df_train[target_col], positive_class)
+        woe_report   = ModellingService.compute_woe_iv(df_train, target_col, n_bins=n_bins,
+                                                       positive_class=positive_class)
         df_train_enc = ModellingService.apply_woe_transform(df_train, target_col, woe_report, n_bins=n_bins)
         df_test_enc  = ModellingService.apply_woe_transform(df_test,  target_col, woe_report, n_bins=n_bins)
-        # encoders : tout ce qu'il faut pour rejouer l'encodage WOE au déploiement
-        encoders = {'type': 'logit', 'target_col': target_col, 'n_bins': n_bins, 'woe_report': woe_report}
+        # encoders : tout ce qu'il faut pour rejouer l'encodage WOE au déploiement.
+        # numeric_na='missing_bin' → le serving doit conserver les NaN (keep_na=True).
+        # Absent des bundles antérieurs : ils gardent l'ancien comportement (-999).
+        encoders = {'type': 'logit', 'target_col': target_col, 'n_bins': n_bins,
+                    'numeric_na': 'missing_bin', 'positive_class': class_names[1],
+                    'class_names': class_names, 'woe_report': woe_report}
         return df_train_enc, df_test_enc, encoders
 
     # ── Pipeline tree sans leakage (fit sur train, transform test) ────────────
@@ -166,15 +178,16 @@ class PipelineService:
     def build_tree_pipeline_split(df_train: pd.DataFrame, df_test: pd.DataFrame,
                                    target_col: str,
                                    cardinality_threshold: int = 10,
-                                   smoothing: float = 0.2):
+                                   smoothing: float = 0.2,
+                                   positive_class=None):
         """OHE + TE calculés sur df_train uniquement — appliqués aux deux. Pas de leakage."""
         df_train, _, cat_cols = PipelineService._preprocess(df_train, target_col)
         df_test,  _, _        = PipelineService._preprocess(df_test,  target_col)
 
-        # Target encoding setup — TRAIN uniquement
-        target_series = df_train[target_col].dropna()
-        vals = sorted(target_series.unique(), key=str)
-        target_map = {vals[0]: 0, vals[1]: 1}
+        # Target encoding setup — TRAIN uniquement, l'événement vaut 1
+        target_map, class_names = ModellingService.build_target_map(
+            df_train[target_col], positive_class
+        )
         y_train    = df_train[target_col].map(target_map).fillna(0).astype(float)
         global_mean = float(y_train.mean())
         m = smoothing * len(df_train)
@@ -229,11 +242,14 @@ class PipelineService:
         encoders = {
             'type':                  'tree',
             'target_col':            target_col,
+            'positive_class':        class_names[1],
+            'class_names':           class_names,
             'ohe_cols':              ohe_cols,
             'ohe_columns':           ohe_columns,
             'te_cols':               te_cols,
             'te_maps':               te_maps,
             'global_mean':           global_mean,
             'cardinality_threshold': cardinality_threshold,
+            'smoothing':             smoothing,
         }
         return df_train, df_test, encoders

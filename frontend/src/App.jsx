@@ -53,7 +53,7 @@ export default function App() {
             <div className="logo-hex">⬡</div>
             {!collapsed && (
               <div className="logo-info">
-                <span className="logo-title">DataPipeline</span>
+                <span className="logo-title">Scoring Factory</span>
                 <span className="logo-sub">v0.1</span>
               </div>
             )}
@@ -114,7 +114,7 @@ export default function App() {
         <header className="topbar">
           <div className="topbar-left">
             <div className="topbar-breadcrumb">
-              <span className="breadcrumb-root">DataPipeline</span>
+              <span className="breadcrumb-root">Scoring Factory</span>
               <span className="breadcrumb-sep">›</span>
               <span className="breadcrumb-current">
                 {activeNav.icon} {activeNav.label}

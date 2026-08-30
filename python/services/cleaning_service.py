@@ -476,6 +476,9 @@ class DataCleaningService:
         """
         strategy='drop'       → supprime les lignes contenant au moins un outlier
         strategy='winsorise'  → clip chaque colonne à ses bornes IQR
+        strategy='keep'       → ne modifie rien, se contente de rapporter les outliers
+                                (utile quand les valeurs extrêmes portent de
+                                 l'information métier — ex. gros encours, impayés)
         """
         numeric_cols = df.select_dtypes(include=[np.number]).columns
         col_report   = {}
@@ -505,7 +508,16 @@ class DataCleaningService:
         if not bounds:
             return df, {}
 
-        if strategy == 'drop':
+        if strategy == 'keep':
+            for col, b in bounds.items():
+                col_report[col] = {
+                    "outliers_count": b["n_out"],
+                    "lower_bound":    round(float(b["lower"]), 4),
+                    "upper_bound":    round(float(b["upper"]), 4),
+                    "treatment":      "aucun traitement (valeurs conservées)",
+                }
+
+        elif strategy == 'drop':
             global_mask = pd.Series(False, index=df.index)
             for col, b in bounds.items():
                 global_mask |= b["mask"]

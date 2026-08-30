@@ -315,6 +315,20 @@ function OutliersReviewSection({ outliersReport, strategy, onStrategyChange }) {
                   <div className="strategy-option-sub">Remplace les outliers par les valeurs aux bornes</div>
                 </div>
               </label>
+              <label className={`strategy-option strategy-option-keep ${strategy === 'keep' ? 'strategy-option-active' : ''}`}>
+                <input
+                  type="radio"
+                  name="outlier_strategy"
+                  value="keep"
+                  checked={strategy === 'keep'}
+                  onChange={() => onStrategyChange('keep')}
+                />
+                <span className="strategy-option-icon">🛡</span>
+                <div>
+                  <div className="strategy-option-title">Conserver (aucun traitement)</div>
+                  <div className="strategy-option-sub">Garde les valeurs extrêmes intactes — utiles si elles portent un signal métier</div>
+                </div>
+              </label>
             </div>
           </div>
 
@@ -442,26 +456,34 @@ function ResultOutliers({ report }) {
   const nCols      = entries.length
   const totalOut   = entries.reduce((sum, [, r]) => sum + (r.outliers_count ?? 0), 0)
   const isDrop     = meta.strategy === 'drop'
-  const strategyLabel = isDrop ? 'Suppression des lignes' : 'Winsorisation IQR'
+  const isKeep     = meta.strategy === 'keep'
+  const strategyLabel = isDrop ? 'Suppression des lignes'
+                      : isKeep ? 'Conservation (aucun traitement)'
+                      : 'Winsorisation IQR'
 
   return (
     <div className="result-content">
       <HeroBanner
-        icon={nCols > 0 ? '⚠' : '✓'}
-        variant={nCols > 0 ? 'warning' : 'success'}
-        title={nCols > 0
-          ? `${totalOut} outlier${totalOut > 1 ? 's' : ''} traité${totalOut > 1 ? 's' : ''} sur ${nCols} colonne${nCols > 1 ? 's' : ''}`
-          : 'Aucun outlier — données numériques propres'}
+        icon={nCols === 0 ? '✓' : isKeep ? '🛡' : '⚠'}
+        variant={nCols === 0 ? 'success' : isKeep ? 'info' : 'warning'}
+        title={nCols === 0
+          ? 'Aucun outlier — données numériques propres'
+          : isKeep
+            ? `${totalOut} outlier${totalOut > 1 ? 's' : ''} conservé${totalOut > 1 ? 's' : ''} sur ${nCols} colonne${nCols > 1 ? 's' : ''}`
+            : `${totalOut} outlier${totalOut > 1 ? 's' : ''} traité${totalOut > 1 ? 's' : ''} sur ${nCols} colonne${nCols > 1 ? 's' : ''}`}
         sub={nCols > 0 ? `Méthode : ${strategyLabel}` : null}
       />
       <div className="result-stats-row">
-        <StatChip value={nCols} label="colonnes affectées" color="#f59e0b" />
+        <StatChip value={nCols} label={isKeep ? 'colonnes concernées' : 'colonnes affectées'} color="#f59e0b" />
         <StatChip value={totalOut} label="outliers détectés" color="#ef4444" />
         {isDrop && meta.rows_dropped > 0 && (
           <StatChip value={meta.rows_dropped} label="lignes supprimées" color="#ef4444" />
         )}
         {isDrop && (
           <StatChip value={meta.rows_after ?? '—'} label="lignes restantes" color="#10b981" />
+        )}
+        {isKeep && (
+          <StatChip value={meta.rows_after ?? '—'} label="lignes inchangées" color="#10b981" />
         )}
       </div>
       {nCols > 0 && (
@@ -472,7 +494,7 @@ function ResultOutliers({ report }) {
               <div className="rlist-meta">
                 <span className="rlist-badge badge-red">{r.outliers_count} outlier{r.outliers_count > 1 ? 's' : ''}</span>
                 <span className="rlist-detail">bornes [{r.lower_bound} ; {r.upper_bound}]</span>
-                <span className="rlist-strategy">✓ {r.treatment}</span>
+                <span className="rlist-strategy">{isKeep ? '🛡' : '✓'} {r.treatment}</span>
               </div>
             </div>
           ))}
@@ -485,9 +507,11 @@ function ResultOutliers({ report }) {
 // ── Panneau de vérification des données nettoyées ────────────────────────────
 // ── Pipeline Builder — sélection cible + config ───────────────────────────────
 function PipelineBuilderSection({ targetCandidates, selectedTarget, onSelectTarget,
+                                   positiveClass, onPositiveClassChange,
                                    cardinality, onCardinalityChange,
                                    nBins, onNBinsChange,
                                    allColumns, excludedCols, onToggleExclude }) {
+  const selCand = targetCandidates.find(c => c.column === selectedTarget)
   return (
     <div className="modal-section">
       <div className="modal-section-header">
@@ -504,8 +528,13 @@ function PipelineBuilderSection({ targetCandidates, selectedTarget, onSelectTarg
         <div className="pb-target-grid">
           {targetCandidates.map(c => {
             const sel = selectedTarget === c.column
-            const pctVal = (c.event_rate * 100).toFixed(1)
-            const balanced = c.balance < 0.15
+            // Sur la carte sélectionnée, le taux suit la modalité choisie par l'utilisateur
+            const evt = (sel && positiveClass != null) ? positiveClass : c.suggested_positive
+            const rate = c.value_counts && c.value_counts[evt] != null
+              ? c.value_counts[evt] / Object.values(c.value_counts).reduce((a, b) => a + b, 0)
+              : c.event_rate
+            const pctVal = (rate * 100).toFixed(1)
+            const balanced = Math.abs(0.5 - rate) < 0.15
             return (
               <div
                 key={c.column}
@@ -517,7 +546,9 @@ function PipelineBuilderSection({ targetCandidates, selectedTarget, onSelectTarg
                   {sel && <span className="pb-target-dot" />}
                 </div>
                 <div className="pb-target-vals">
-                  {c.values.map(v => <span key={v} className="pb-target-val">{v}</span>)}
+                  {c.values.map(v => (
+                    <span key={v} className={`pb-target-val ${sel && v === evt ? 'pb-target-val-evt' : ''}`}>{v}</span>
+                  ))}
                 </div>
                 <div className="pb-target-bar-wrap">
                   <div className="pb-target-bar" style={{ width: `${pctVal}%` }} />
@@ -534,6 +565,50 @@ function PipelineBuilderSection({ targetCandidates, selectedTarget, onSelectTarg
               </div>
             )
           })}
+        </div>
+      )}
+
+      {selCand && (
+        <div className="pb-event-box">
+          <div className="pb-event-label">
+            Modalité à modéliser (l'événement)
+            <span className="pb-config-hint">
+              Fixe le signe du WOE, l'orientation de la matrice de confusion et le sens des déciles.
+              L'AUC, elle, est identique dans les deux sens.
+            </span>
+          </div>
+          <div className="pb-event-options">
+            {selCand.values.map(v => {
+              const active = (positiveClass ?? selCand.suggested_positive) === v
+              const cnt    = selCand.value_counts?.[v]
+              const tot    = selCand.value_counts
+                ? Object.values(selCand.value_counts).reduce((a, b) => a + b, 0) : 0
+              return (
+                <label key={v} className={`pb-event-opt ${active ? 'pb-event-opt-active' : ''}`}>
+                  <input
+                    type="radio"
+                    name="positive_class"
+                    value={v}
+                    checked={active}
+                    onChange={() => onPositiveClassChange(v)}
+                  />
+                  <div>
+                    <div className="pb-event-opt-title">
+                      {v}
+                      {v === selCand.suggested_positive && (
+                        <span className="pb-event-sugg">suggéré</span>
+                      )}
+                    </div>
+                    {cnt != null && tot > 0 && (
+                      <div className="pb-event-opt-sub">
+                        {cnt.toLocaleString('fr-FR')} obs · {(cnt / tot * 100).toFixed(1)} %
+                      </div>
+                    )}
+                  </div>
+                </label>
+              )
+            })}
+          </div>
         </div>
       )}
 
@@ -790,6 +865,9 @@ export default function DataCleaning({ activeFile, setCleaningSession }) {
   // Pipeline builder
   const [targetCandidates,   setTargetCandidates]   = useState([])
   const [selectedTarget,     setSelectedTarget]     = useState(null)
+  // Modalité de la cible modélisée comme l'événement (défaut, fraude…).
+  // Détermine le signe du WOE, l'orientation de la matrice de confusion et les déciles.
+  const [positiveClass,      setPositiveClass]      = useState(null)
   const [cardinalityThresh,  setCardinalityThresh]  = useState(10)
   const [nBinsPipeline,      setNBinsPipeline]      = useState(10)
   const [pipelineResult,     setPipelineResult]     = useState(null)
@@ -809,7 +887,7 @@ export default function DataCleaning({ activeFile, setCleaningSession }) {
     setTypesResult(null); setDoublonsResult(null); setOutliersResult(null)
     setUserTypes({}); setUserOutlierStrategy('drop')
     setPipPhase(null)
-    setTargetCandidates([]); setSelectedTarget(null)
+    setTargetCandidates([]); setSelectedTarget(null); setPositiveClass(null)
     setPipelineResult(null)
     setCardinalityThresh(10); setNBinsPipeline(10)
     setExcludedCols(new Set())
@@ -823,6 +901,13 @@ export default function DataCleaning({ activeFile, setCleaningSession }) {
     setTimeout(() => {
       resultsPanelRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
     }, 50)
+  }
+
+  // Choisir une cible réinitialise l'événement sur la modalité suggérée (la plus rare)
+  const selectTarget = (col) => {
+    setSelectedTarget(col)
+    const cand = targetCandidates.find(c => c.column === col)
+    setPositiveClass(cand?.suggested_positive ?? cand?.values?.[1] ?? null)
   }
 
   const addLog = (key, status, msg) =>
@@ -842,7 +927,7 @@ export default function DataCleaning({ activeFile, setCleaningSession }) {
     setUserTypes({})
     setUserOutlierStrategy('drop')
     setPipPhase(null)
-    setTargetCandidates([]); setSelectedTarget(null)
+    setTargetCandidates([]); setSelectedTarget(null); setPositiveClass(null)
     setPipelineResult(null)
     setPipelineState('running')
     addLog('pipeline', 'running', 'Initialisation du pipeline…')
@@ -907,7 +992,9 @@ export default function DataCleaning({ activeFile, setCleaningSession }) {
 
       const nTypesOk = Object.values(data.types_result?.apply_report || {}).filter(r => r.success).length
       const nDbl     = data.doublons_result?.report?.duplicates_found ?? 0
-      const nOutCols = Object.keys(data.outliers_result?.report || {}).length
+      const outReport   = data.outliers_result?.report || {}
+      const outStrategy = outReport._meta?.strategy
+      const nOutCols    = Object.keys(outReport).filter(k => k !== '_meta').length
 
       setTypesResult(data.types_result)
       setDoublonsResult(data.doublons_result?.report)
@@ -915,7 +1002,15 @@ export default function DataCleaning({ activeFile, setCleaningSession }) {
 
       addLog('types',    'success', `${nTypesOk} colonnes converties`)
       addLog('doublons', 'success', `${nDbl} doublon${nDbl > 1 ? 's' : ''} supprimé${nDbl > 1 ? 's' : ''}`)
-      addLog('outliers', 'success', `${nOutCols} colonne${nOutCols > 1 ? 's' : ''} winsorisée${nOutCols > 1 ? 's' : ''}`)
+      const sPlur = nOutCols > 1 ? 's' : ''
+      addLog('outliers', 'success',
+        nOutCols === 0
+          ? 'Aucun outlier à traiter'
+          : outStrategy === 'keep'
+            ? `${nOutCols} colonne${sPlur} avec outliers — conservés tels quels`
+            : outStrategy === 'drop'
+              ? `${nOutCols} colonne${sPlur} traitée${sPlur} — lignes aberrantes supprimées`
+              : `${nOutCols} colonne${sPlur} winsorisée${sPlur}`)
       addLog('pipeline', 'success', '3/4 étapes terminées — Construction des pipelines à venir')
 
       setPipelineState('done')
@@ -972,6 +1067,7 @@ export default function DataCleaning({ activeFile, setCleaningSession }) {
     fd.append('n_bins',                String(nBinsPipeline))
     fd.append('cardinality_threshold', String(cardinalityThresh))
     fd.append('smoothing',             '0.2')
+    if (positiveClass != null) fd.append('positive_class', String(positiveClass))
     fd.append('excluded_cols', JSON.stringify([...excludedCols]))
 
     try {
@@ -1160,7 +1256,7 @@ export default function DataCleaning({ activeFile, setCleaningSession }) {
           </div>
           <div className="task-card-body">
             <h3 className="task-title">Détection des outliers</h3>
-            <p className="task-desc">Analyse IQR · winsorisation automatique aux bornes</p>
+            <p className="task-desc">Analyse IQR · suppression, winsorisation ou conservation au choix</p>
           </div>
           {pipelineState === 'done' && outliersResult && (
             <div className="task-card-footer">
@@ -1374,7 +1470,9 @@ export default function DataCleaning({ activeFile, setCleaningSession }) {
               <PipelineBuilderSection
                 targetCandidates={targetCandidates}
                 selectedTarget={selectedTarget}
-                onSelectTarget={setSelectedTarget}
+                onSelectTarget={selectTarget}
+                positiveClass={positiveClass}
+                onPositiveClassChange={setPositiveClass}
                 cardinality={cardinalityThresh}
                 onCardinalityChange={setCardinalityThresh}
                 nBins={nBinsPipeline}
