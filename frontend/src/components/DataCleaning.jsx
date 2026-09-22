@@ -975,7 +975,7 @@ export default function DataCleaning({ activeFile, setCleaningSession }) {
 
   // ── ÉTAPE 2 : Confirmation dans le modal → application ───────────────────
   async function confirmAndApply() {
-    if (!sessionId) return
+    if (!sessionId || pipelineState === 'applying') return
     setPipelineState('applying')
     addLog('pipeline', 'running', 'Application des transformations…')
 
@@ -1427,8 +1427,12 @@ export default function DataCleaning({ activeFile, setCleaningSession }) {
               <button className="btn-modal-cancel" onClick={() => setPipelineState('idle')}>
                 Annuler
               </button>
-              <button className="btn-modal-confirm" onClick={confirmAndApply}>
-                ✓ Confirmer et appliquer
+              <button
+                className="btn-modal-confirm"
+                onClick={confirmAndApply}
+                disabled={pipelineState === 'applying'}
+              >
+                {pipelineState === 'applying' ? '⏳ Application en cours…' : '✓ Confirmer et appliquer'}
               </button>
             </div>
 
@@ -1489,9 +1493,9 @@ export default function DataCleaning({ activeFile, setCleaningSession }) {
                 className="btn-modal-confirm"
                 style={{ background: '#10b981' }}
                 onClick={buildPipelines}
-                disabled={!selectedTarget}
+                disabled={!selectedTarget || pipPhase === 'building'}
               >
-                🔀 Construire les pipelines
+                {pipPhase === 'building' ? '⏳ Construction en cours…' : '🔀 Construire les pipelines'}
               </button>
             </div>
 
