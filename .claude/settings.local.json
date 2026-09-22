@@ -12,7 +12,8 @@
       "Skill(code-review:*)",
       "Bash(git diff *)",
       "Bash(python -m py_compile services/training_service.py services/session_store.py routes/data_modelling_routes.py routes/data_cleaning_routes.py services/multilabel_service.py)",
-      "Bash(grep -E \"package-lock\\\\.json$\")"
+      "Bash(grep -E \"package-lock\\\\.json$\")",
+      "Bash(grep -E \"\\\\.env$\")"
     ]
   }
 }

@@ -10,48 +10,35 @@ frontend (nginx:80)  ──►  backend (node:3001)  ──►  python (flask+gu
 
 ---
 
-## 🚀 Déploiement en une commande
+## 🚀 Déploiement en une commande (Windows)
 
 ### Prérequis (à installer une seule fois par machine)
 
-| OS               | À installer                                                                 |
-|------------------|-----------------------------------------------------------------------------|
-| Windows / macOS  | [Docker Desktop](https://www.docker.com/products/docker-desktop/) (inclut Compose) |
-| Linux            | `docker` + `docker compose` plugin (via [get.docker.com](https://get.docker.com)) |
+1. **[Docker Desktop pour Windows](https://www.docker.com/products/docker-desktop/)** — inclut Docker + Compose + WSL2
+2. **[Git pour Windows](https://git-scm.com/download/win)**
 
-Vérifie que Docker est bien démarré avant de continuer.
+Démarre Docker Desktop et attends que l'icône soit verte dans la barre des tâches.
 
 ### 1️⃣ Cloner le projet
 
-```bash
+```powershell
 git clone <URL-DU-REPO> sc_mod
 cd sc_mod
 ```
 
-### 2️⃣ Lancer tout d'un coup
+### 2️⃣ Tout lancer
 
-**Windows (PowerShell)** :
 ```powershell
 .\scripts\deploy.ps1 up
 ```
 
-**Linux / macOS** :
-```bash
-make up
-```
-
-**Ou directement avec Docker Compose** (universel) :
-```bash
-docker compose up -d --build
-```
-
-La commande :
-1. Vérifie que Docker est disponible.
-2. Build les 3 images (frontend, backend, python) — installe automatiquement toutes les dépendances (npm, pip).
+Cette commande :
+1. Vérifie que Docker est disponible et démarré.
+2. Build les 3 images (frontend, backend, python) — installe automatiquement toutes les dépendances (npm + pip).
 3. Démarre les conteneurs en arrière-plan avec healthchecks.
 4. Attend que chaque service soit **prêt** avant de démarrer le suivant.
 
-⏱️ Le premier build prend **5–15 min** (téléchargement des libs Python ML : pandas, scikit-learn, xgboost, lightgbm, ydata-profiling…).
+⏱️ Le premier build prend **5–15 min** (téléchargement des libs Python ML : pandas, scikit-learn, xgboost, lightgbm, ydata-profiling…). Les builds suivants sont quasi instantanés grâce au cache Docker.
 
 ### 3️⃣ Accéder à l'application
 
@@ -63,17 +50,28 @@ Les services `backend` et `python` ne sont **pas** exposés à l'hôte (accès u
 
 ## 🛠️ Commandes utiles
 
-| Action                          | Windows                              | Linux / macOS                | Docker Compose brut                 |
-|---------------------------------|--------------------------------------|------------------------------|-------------------------------------|
-| Démarrer                        | `.\scripts\deploy.ps1 up`            | `make up`                    | `docker compose up -d --build`      |
-| Arrêter                         | `.\scripts\deploy.ps1 down`          | `make down`                  | `docker compose down`               |
-| Voir l'état + healthchecks      | `.\scripts\deploy.ps1 status`        | `make status`                | `docker compose ps`                 |
-| Suivre tous les logs            | `.\scripts\deploy.ps1 logs`          | `make logs`                  | `docker compose logs -f`            |
-| Logs d'un seul service          | `.\scripts\deploy.ps1 logs backend`  | `make logs SERVICE=backend`  | `docker compose logs -f backend`    |
-| Redémarrer                      | `.\scripts\deploy.ps1 restart`       | `make restart`               | `docker compose restart`            |
-| Rebuild sans cache              | `.\scripts\deploy.ps1 rebuild`       | `make rebuild`               | `docker compose build --no-cache`   |
-| Ouvrir un shell dans un service | `.\scripts\deploy.ps1 shell backend` | `make shell-backend`         | `docker compose exec backend sh`    |
-| ⚠️ Tout supprimer (+volumes)    | `.\scripts\deploy.ps1 clean`         | `make clean`                 | `docker compose down -v`            |
+Toutes les commandes se lancent depuis la racine du projet en PowerShell.
+
+| Action                          | Commande                              |
+|---------------------------------|---------------------------------------|
+| Démarrer / builder              | `.\scripts\deploy.ps1 up`             |
+| Arrêter (garde les données)     | `.\scripts\deploy.ps1 down`           |
+| Voir l'état + healthchecks      | `.\scripts\deploy.ps1 status`         |
+| Suivre tous les logs            | `.\scripts\deploy.ps1 logs`           |
+| Logs d'un seul service          | `.\scripts\deploy.ps1 logs backend`   |
+| Redémarrer                      | `.\scripts\deploy.ps1 restart`        |
+| Rebuild sans cache              | `.\scripts\deploy.ps1 rebuild`        |
+| Ouvrir un shell dans un service | `.\scripts\deploy.ps1 shell backend`  |
+| Vérifier que Docker est OK      | `.\scripts\deploy.ps1 check`          |
+| ⚠️ Tout supprimer (+volumes)    | `.\scripts\deploy.ps1 clean`          |
+
+Équivalents `docker compose` bruts si besoin :
+```powershell
+docker compose up -d --build     # up
+docker compose down              # down
+docker compose ps                # status
+docker compose logs -f           # logs
+```
 
 ---
 
@@ -82,9 +80,8 @@ Les services `backend` et `python` ne sont **pas** exposés à l'hôte (accès u
 ```
 sc_mod/
 ├── docker-compose.yml     # orchestration des 3 services
-├── Makefile               # commandes make (Linux/macOS)
 ├── scripts/
-│   └── deploy.ps1         # commandes PowerShell (Windows)
+│   └── deploy.ps1         # commandes PowerShell tout-en-un
 ├── frontend/              # React + Vite, servi par nginx en prod
 │   ├── Dockerfile         # multi-stage : build vite → nginx
 │   └── nginx.conf         # SPA + proxy /api vers backend
@@ -108,8 +105,8 @@ Les uploads et rapports sont stockés dans des **volumes Docker nommés** :
 
 Ces données **survivent** aux `down` / `restart`. Elles sont supprimées uniquement avec `clean` ou `docker compose down -v`.
 
-Pour sauvegarder :
-```bash
+Pour sauvegarder les rapports :
+```powershell
 docker run --rm -v sc_mod_backend_reports:/data -v ${PWD}:/backup alpine tar czf /backup/reports-backup.tar.gz -C /data .
 ```
 
@@ -135,7 +132,7 @@ Pour surcharger ponctuellement, crée un fichier `.env` à la racine (déjà ign
 Normal au premier lancement (téléchargement de xgboost, lightgbm, scikit-learn…). Les builds suivants utilisent le cache Docker.
 
 ### `Port 8080 already in use`
-Un autre service utilise le port. Change le mapping dans `docker-compose.yml` :
+Un autre service utilise le port. Change le mapping dans [docker-compose.yml](docker-compose.yml) :
 ```yaml
 frontend:
   ports:
@@ -153,10 +150,16 @@ frontend:
 .\scripts\deploy.ps1 rebuild
 ```
 
-### Docker Desktop refuse de démarrer sur Windows
+### Docker Desktop refuse de démarrer
 Vérifie que la virtualisation est activée dans le BIOS et que WSL2 est installé :
 ```powershell
 wsl --install
+```
+
+### `execution of scripts is disabled on this system`
+PowerShell bloque les scripts par défaut. Autorise-les pour ta session :
+```powershell
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
 ```
 
 ---
@@ -170,5 +173,5 @@ Pour itérer rapidement sur un seul service, tu peux le lancer en natif tout en 
 docker compose up -d python backend
 cd frontend
 npm install
-npm run dev   # http://localhost:5173, proxy /api vers docker:3001 via VITE_PROXY_TARGET
+npm run dev   # http://localhost:5173, proxy /api vers docker:3001
 ```
