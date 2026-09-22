@@ -25,4 +25,4 @@ EXPOSE 5001
 HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
     CMD python -c "import socket,sys; s=socket.socket(); s.settimeout(2); s.connect(('localhost',5001)); sys.exit(0)" || exit 1
 
-CMD ["gunicorn", "-w", "2", "-k", "gthread", "--threads", "4", "-t", "300", "-b", "0.0.0.0:5001", "app:app"]
+CMD ["gunicorn", "-w", "1", "-k", "gthread", "--threads", "8", "-t", "600", "-b", "0.0.0.0:5001", "app:app"]

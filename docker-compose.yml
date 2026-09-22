@@ -5,6 +5,7 @@ networks:
 volumes:
   backend_uploads:
   backend_reports:
+  python_models:
 
 services:
   python:
@@ -19,6 +20,8 @@ services:
     restart: unless-stopped
     environment:
       PYTHONUNBUFFERED: "1"
+    volumes:
+      - python_models:/app/models
     healthcheck:
       test: ["CMD", "python", "-c", "import socket,sys; s=socket.socket(); s.settimeout(2); s.connect(('localhost',5001)); sys.exit(0)"]
       interval: 30s
