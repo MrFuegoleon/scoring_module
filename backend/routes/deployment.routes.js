@@ -7,7 +7,8 @@ import fs from "fs";
 const router = express.Router();
 const upload = multer({ dest: "uploads/" });
 
-const FLASK = "http://localhost:5001/api/deployment";
+const FLASK_BASE_URL = process.env.FLASK_URL || "http://localhost:5001";
+const FLASK = `${FLASK_BASE_URL}/api/deployment`;
 
 // GET → Flask (list /models, /schema, /download binaire)
 router.get("/*", async (req, res) => {
@@ -28,7 +29,9 @@ router.get("/*", async (req, res) => {
 // DELETE → Flask
 router.delete("/*", async (req, res) => {
   try {
-    const response = await axios.delete(`${FLASK}${req.path}`, { params: req.query });
+    const response = await axios.delete(`${FLASK}${req.path}`, {
+      params: req.query,
+    });
     res.json(response.data);
   } catch (e) {
     const status = e.response?.status || 500;
@@ -41,7 +44,11 @@ router.delete("/*", async (req, res) => {
 router.post("/*", upload.single("file"), async (req, res) => {
   const form = new FormData();
   if (req.file) {
-    form.append("file", fs.createReadStream(req.file.path), req.file.originalname);
+    form.append(
+      "file",
+      fs.createReadStream(req.file.path),
+      req.file.originalname,
+    );
   }
   for (const [key, value] of Object.entries(req.body || {})) {
     form.append(key, value);

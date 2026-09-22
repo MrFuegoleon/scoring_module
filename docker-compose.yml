@@ -1,0 +1,73 @@
+networks:
+  sc_mod_net:
+    driver: bridge
+
+volumes:
+  backend_uploads:
+  backend_reports:
+
+services:
+  python:
+    build:
+      context: ./python
+      dockerfile: Dockerfile
+    container_name: sc_mod_python
+    expose:
+      - "5001"
+    networks:
+      - sc_mod_net
+    restart: unless-stopped
+    environment:
+      PYTHONUNBUFFERED: "1"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import socket,sys; s=socket.socket(); s.settimeout(2); s.connect(('localhost',5001)); sys.exit(0)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: sc_mod_backend
+    expose:
+      - "3001"
+    networks:
+      - sc_mod_net
+    depends_on:
+      python:
+        condition: service_healthy
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      FLASK_URL: http://python:5001
+    volumes:
+      - backend_uploads:/app/uploads
+      - backend_reports:/app/reports
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('net').connect(3001,'localhost').on('connect',()=>process.exit(0)).on('error',()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: sc_mod_frontend
+    ports:
+      - "8080:80"
+    networks:
+      - sc_mod_net
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s

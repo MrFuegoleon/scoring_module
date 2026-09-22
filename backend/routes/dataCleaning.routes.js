@@ -6,10 +6,11 @@ import fs from "fs";
 
 const router = express.Router();
 const upload = multer({ dest: "uploads/" });
+const FLASK_BASE_URL = process.env.FLASK_URL || "http://localhost:5001";
 
 // Proxy GET → Flask (ex: /pipeline/download/<type>?session_id=...)
 router.get("/*", async (req, res) => {
-  const flaskUrl = `http://localhost:5001/api/data-cleaning${req.path}`;
+  const flaskUrl = `${FLASK_BASE_URL}/api/data-cleaning${req.path}`;
   try {
     const response = await axios.get(flaskUrl, {
       params: req.query,
@@ -27,13 +28,17 @@ router.get("/*", async (req, res) => {
 // Proxy générique POST → Flask — gère tous les sous-chemins (y compris pipeline/init,
 // pipeline/confirm) et rend le fichier optionnel (confirm et missing n'en ont pas).
 router.post("/*", upload.single("file"), async (req, res) => {
-  const flaskUrl = `http://localhost:5001/api/data-cleaning${req.path}`;
+  const flaskUrl = `${FLASK_BASE_URL}/api/data-cleaning${req.path}`;
 
   const form = new FormData();
 
   // Fichier présent uniquement sur /pipeline/init
   if (req.file) {
-    form.append("file", fs.createReadStream(req.file.path), req.file.originalname);
+    form.append(
+      "file",
+      fs.createReadStream(req.file.path),
+      req.file.originalname,
+    );
   }
 
   // Champs texte : session_id, confirmed_types, etc.

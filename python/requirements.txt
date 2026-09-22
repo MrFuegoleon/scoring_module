@@ -1,5 +1,6 @@
 setuptools<80
 flask
+gunicorn
 pandas
 ydata-profiling
 pdfplumber

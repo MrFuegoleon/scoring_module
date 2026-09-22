@@ -29,4 +29,4 @@ app.register_blueprint(multilabel_bp,     url_prefix="/api/multilabel")
 app.register_blueprint(deployment_bp,     url_prefix="/api/deployment")
 
 if __name__ == '__main__':
-    app.run(port=PORT, debug=False)
+    app.run(host='0.0.0.0', port=PORT, debug=False)

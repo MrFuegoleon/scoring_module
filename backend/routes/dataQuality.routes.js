@@ -21,7 +21,7 @@ import {
 
 const router = express.Router();
 const upload = multer({ dest: "uploads/" });
-const FLASK_URL = "http://localhost:5001";
+const FLASK_URL = process.env.FLASK_URL || "http://localhost:5001";
 
 // ── Helper : forwarder un fichier local vers Flask ──────────────────────────
 async function forwardFileToFlask(flaskEndpoint, filePath, originalName) {
